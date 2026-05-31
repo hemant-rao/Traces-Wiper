@@ -1,0 +1,6 @@
+{
+  "name": "Secure Shredder",
+  "description": "A military-grade secure file and note shredding tool that permanently deletes sensitive data using overwrite algorithms (DoD 5220.22-M, Gutmann) to prevent any recovery.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
