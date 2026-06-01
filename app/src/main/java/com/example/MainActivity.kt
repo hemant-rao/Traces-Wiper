@@ -1,9 +1,16 @@
 package com.example
 
+import android.Manifest
+import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.os.Environment
+import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.core.content.ContextCompat
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -129,9 +136,16 @@ import com.example.ui.theme.TextSecondary
 import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
+
+    // Runtime permission popup for Android 10 and below (read/write external storage)
+    private val storagePermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { /* User may still use the document picker even if denied; no-op here. */ }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        ensureFileAccessPermission()
         setContent {
             MyApplicationTheme {
                 Scaffold(
@@ -140,6 +154,44 @@ class MainActivity : ComponentActivity() {
                 ) { innerPadding ->
                     ShredderAppScreen(modifier = Modifier.padding(innerPadding))
                 }
+            }
+        }
+    }
+
+    /**
+     * Requests file-access permission so the shredder can physically delete files.
+     * Android 11+ : opens the "All files access" permission screen (required to unlink
+     * files outside the app sandbox). Android 10 and below: shows the standard
+     * read/write storage runtime permission popup.
+     */
+    private fun ensureFileAccessPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            if (!Environment.isExternalStorageManager()) {
+                try {
+                    startActivity(
+                        Intent(
+                            Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                            Uri.parse("package:$packageName")
+                        )
+                    )
+                } catch (e: Exception) {
+                    try {
+                        startActivity(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
+                    } catch (_: Exception) {
+                        // Settings screen unavailable on this device; picker still works.
+                    }
+                }
+            }
+        } else {
+            val perms = arrayOf(
+                Manifest.permission.READ_EXTERNAL_STORAGE,
+                Manifest.permission.WRITE_EXTERNAL_STORAGE
+            )
+            val needsRequest = perms.any {
+                ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+            }
+            if (needsRequest) {
+                storagePermissionLauncher.launch(perms)
             }
         }
     }

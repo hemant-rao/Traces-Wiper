@@ -442,13 +442,17 @@ class ShredderViewModel(application: Application) : AndroidViewModel(application
                     // Contents are still guaranteed to be wiped even if Uri metadata remains
                 }
 
-                // Tertiary deletion attempt via physical file path
+                // Tertiary deletion attempt via physical file path (resolved from the
+                // picked document URI). Works on Android 11+ once "All files access" is granted.
                 if (!secondaryDeleted) {
                     try {
-                        val path = getFilePathFromUri(getApplication(), uri)
+                        val path = resolveDocumentToFilePath(getApplication(), uri)
+                            ?: getFilePathFromUri(getApplication(), uri)
                         if (path != null) {
                             val f = File(path)
                             if (f.exists() && f.delete()) {
+                                secondaryDeleted = true
+                            } else if (!f.exists()) {
                                 secondaryDeleted = true
                             }
                         }
@@ -458,11 +462,11 @@ class ShredderViewModel(application: Application) : AndroidViewModel(application
                 }
 
                 if (secondaryDeleted) {
-                    onProgressUpdate(algorithm.totalPasses, algorithm.totalPasses, 100f, "Success: Deleted completely via backup protocol.")
+                    onProgressUpdate(algorithm.totalPasses, algorithm.totalPasses, 100f, "Success: Shredded & deleted completely.")
                     return true
                 }
 
-                onProgressUpdate(algorithm.totalPasses, algorithm.totalPasses, 100f, "Success: Data overwritten, index remaining.")
+                onProgressUpdate(algorithm.totalPasses, algorithm.totalPasses, 100f, "⚠️ Data overwritten, but file could not be unlinked. Grant 'All files access' permission to fully delete.")
                 return true
             }
         } catch (e: Exception) {
@@ -470,6 +474,62 @@ class ShredderViewModel(application: Application) : AndroidViewModel(application
             e.printStackTrace()
             return false
         }
+    }
+
+    /**
+     * Resolves a Storage Access Framework document URI (returned by the file picker)
+     * to a real filesystem path so the file can be physically unlinked with File.delete().
+     * Requires "All files access" (MANAGE_EXTERNAL_STORAGE) on Android 11+ for paths
+     * outside the app sandbox. Returns null when the path cannot be determined.
+     */
+    private fun resolveDocumentToFilePath(context: android.content.Context, uri: Uri): String? {
+        try {
+            if (!DocumentsContract.isDocumentUri(context, uri)) return null
+            val docId = DocumentsContract.getDocumentId(uri)
+
+            when (uri.authority) {
+                "com.android.externalstorage.documents" -> {
+                    val split = docId.split(":")
+                    val type = split[0]
+                    val relative = if (split.size > 1) split[1] else ""
+                    return if (type.equals("primary", ignoreCase = true)) {
+                        Environment.getExternalStorageDirectory().absolutePath + "/" + relative
+                    } else {
+                        // Removable / secondary volume (e.g. SD card)
+                        "/storage/$type/$relative"
+                    }
+                }
+                "com.android.providers.downloads.documents" -> {
+                    if (docId.startsWith("raw:")) {
+                        return docId.removePrefix("raw:")
+                    }
+                    // Otherwise resolve via MediaStore below
+                }
+                "com.android.providers.media.documents" -> {
+                    val split = docId.split(":")
+                    if (split.size > 1) {
+                        val id = split[1]
+                        val contentUri = MediaStore.Files.getContentUri("external")
+                        val selection = MediaStore.Files.FileColumns._ID + "=?"
+                        context.contentResolver.query(
+                            contentUri,
+                            arrayOf(MediaStore.MediaColumns.DATA),
+                            selection,
+                            arrayOf(id),
+                            null
+                        )?.use { cursor ->
+                            if (cursor.moveToFirst()) {
+                                val idx = cursor.getColumnIndex(MediaStore.MediaColumns.DATA)
+                                if (idx != -1) return cursor.getString(idx)
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            // Fall through to null
+        }
+        return null
     }
 
     private fun getFilePathFromUri(context: android.content.Context, uri: Uri): String? {
