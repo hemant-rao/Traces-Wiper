@@ -9,6 +9,7 @@ import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.graphics.Color
 
 private val DarkColorScheme =
   darkColorScheme(
@@ -19,19 +20,30 @@ private val DarkColorScheme =
     surface = CharcoalSurface,
     onBackground = TextPrimary,
     onSurface = TextPrimary,
-    onPrimary = CarbonDarkBg,
+    onPrimary = Color.White,
     error = LaserRed
   )
 
-private val LightColorScheme = DarkColorScheme // Always use dark theme for secure look!
+private val LightColorScheme =
+  lightColorScheme(
+    primary = NeonGreen,
+    secondary = TerminalCyan,
+    tertiary = ElectricAmber,
+    background = CarbonDarkBg,
+    surface = CharcoalSurface,
+    onBackground = TextPrimary,
+    onSurface = TextPrimary,
+    onPrimary = Color.White,
+    error = LaserRed
+  )
 
 @Composable
 fun MyApplicationTheme(
-  darkTheme: Boolean = true, // Force dark theme
-  dynamicColor: Boolean = false, // Force custom dark scheme
+  darkTheme: Boolean = ThemeState.isDarkTheme,
+  dynamicColor: Boolean = false,
   content: @Composable () -> Unit,
 ) {
-  val colorScheme = DarkColorScheme
+  val colorScheme = if (ThemeState.isDarkTheme) DarkColorScheme else LightColorScheme
 
   MaterialTheme(colorScheme = colorScheme, typography = Typography, content = content)
 }

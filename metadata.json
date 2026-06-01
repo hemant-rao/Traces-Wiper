@@ -1,6 +1,6 @@
 {
-  "name": "Secure Shredder",
-  "description": "A military-grade secure file and note shredding tool that permanently deletes sensitive data using overwrite algorithms (DoD 5220.22-M, Gutmann) to prevent any recovery.",
+  "name": "cyberWipe",
+  "description": "An elite, cyberpunk-inspired secure data destruction suite for military-grade file sanitization, unallocated sector space sweeping, and secure note scrubbing without trace recovery.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
