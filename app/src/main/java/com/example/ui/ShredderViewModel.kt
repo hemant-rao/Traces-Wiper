@@ -453,28 +453,34 @@ class ShredderViewModel(application: Application) : AndroidViewModel(application
         // path and for resolving a MediaStore URI for the consent fallback.
         val resolvedPath = resolveDocumentToFilePath(context, uri) ?: getFilePathFromUri(context, uri)
 
-        // FAST PATH: with "All files access" granted and a real path, shred + unlink directly
-        // through the proven physical-file routine (true overwrite, no system dialog).
+        // Actual number of bytes overwritten; -1 until an overwrite actually runs.
+        var wipedBytes = -1L
+        // True once the bytes have been overwritten by either path, so we never double-wipe.
+        var overwritten = false
+
+        // FAST PATH: with "All files access" granted and a real path, overwrite the bytes
+        // directly through the proven physical-file routine. Deletion is intentionally NOT
+        // done here — the shared DELETE CHAIN below handles it, because it prefers the system
+        // delete-confirmation modal for MediaStore-indexed files and always purges the stale
+        // index entry (a bare File.delete leaves a ghost row in Files/Gallery).
         if (resolvedPath != null &&
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
             Environment.isExternalStorageManager()
         ) {
             val file = File(resolvedPath)
             if (file.exists() && file.canWrite()) {
-                val wiped = if (file.length() > 0L) file.length() else actualSize
-                if (executePhysicalFileShredding(resolvedPath, algorithm, onProgressUpdate)) {
-                    return ShredOutcome.Deleted(wiped)
+                wipedBytes = if (file.length() > 0L) file.length() else actualSize
+                // unlink = false: overwrite only, defer the actual delete to the chain below.
+                if (executePhysicalFileShredding(resolvedPath, algorithm, unlink = false, onProgressUpdate = onProgressUpdate)) {
+                    overwritten = true
                 }
-                // Otherwise fall through to the SAF / consent attempts below.
             }
         }
 
-        // Actual number of bytes overwritten; -1 until the overwrite block runs.
-        var wipedBytes = -1L
-
-        // Best-effort overwrite via the SAF descriptor. A read-only provider (or media the
-        // app does not own) returns null / throws here; we log and still try to delete below.
-        try {
+        // Best-effort overwrite via the SAF descriptor (only if the fast path didn't already
+        // overwrite). A read-only provider (or media the app does not own) returns null /
+        // throws here; we log and still try to delete below.
+        if (!overwritten) try {
             val pfd = contentResolver.openFileDescriptor(uri, "rw")
             if (pfd == null) {
                 onProgressUpdate(0, algorithm.totalPasses, 0f, "Note: file could not be opened for overwriting; attempting direct deletion.")
@@ -576,17 +582,34 @@ class ShredderViewModel(application: Application) : AndroidViewModel(application
         // DELETE CHAIN.
         onProgressUpdate(algorithm.totalPasses, algorithm.totalPasses, 100f, "Permanent Deletion: removing file entry...")
 
+        // Resolve the file to a MediaStore entry first. For anything the system has indexed
+        // (gallery / files media), the canonical and reliable unlink is the system
+        // delete-confirmation modal (MediaStore.createDeleteRequest): it shows the same
+        // "allow this app to delete?" dialog users see in other apps AND removes the index
+        // row, so the file actually disappears instead of lingering as a stale entry after a
+        // bare File.delete().
+        val mediaUri = resolvedPath?.let { getContentUriFromFilePath(context, it) }
+        if (mediaUri != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            return ShredOutcome.NeedsConsent(mediaUri, reportedBytes)
+        }
+
         // 1. SAF document delete (works for providers that grant delete, e.g. tree URIs).
         val safDeleted = try {
             DocumentsContract.deleteDocument(contentResolver, uri)
         } catch (e: Exception) {
             false
         }
-        if (safDeleted) return deleted()
+        if (safDeleted) {
+            resolvedPath?.let { notifyMediaStoreDeleted(context, it) }
+            return deleted()
+        }
 
         // 2. Resolver delete (some providers support it directly).
         try {
-            if (contentResolver.delete(uri, null, null) > 0) return deleted()
+            if (contentResolver.delete(uri, null, null) > 0) {
+                resolvedPath?.let { notifyMediaStoreDeleted(context, it) }
+                return deleted()
+            }
         } catch (e: Exception) {
             // Provider does not support delete; continue.
         }
@@ -595,14 +618,18 @@ class ShredderViewModel(application: Application) : AndroidViewModel(application
         if (resolvedPath != null) {
             try {
                 val f = File(resolvedPath)
-                if (!f.exists() || f.delete()) return deleted()
+                if (!f.exists() || f.delete()) {
+                    // Purge any stale MediaStore index row so the file stops showing in
+                    // Files / Gallery (a bare File.delete leaves the index untouched).
+                    notifyMediaStoreDeleted(context, resolvedPath)
+                    return deleted()
+                }
             } catch (e: Exception) {
                 // Fall through to the consent fallback.
             }
         }
 
-        // 4. Fall back to a system delete-consent dialog for MediaStore-indexed files.
-        val mediaUri = resolvedPath?.let { getContentUriFromFilePath(context, it) }
+        // 4. Last-resort consent modal (e.g. a media URI resolved on a pre-R device).
         if (mediaUri != null) {
             return ShredOutcome.NeedsConsent(mediaUri, reportedBytes)
         }
@@ -638,26 +665,18 @@ class ShredderViewModel(application: Application) : AndroidViewModel(application
                     if (docId.startsWith("raw:")) {
                         return docId.removePrefix("raw:")
                     }
-                    // Otherwise resolve via MediaStore below
+                    // Modern pickers return a doc id like "msf:1234" (or a bare numeric id)
+                    // whose number is a MediaStore _ID; resolve it to a real path so the
+                    // All-files-access fast delete path can run instead of bailing to null.
+                    val id = docId.substringAfterLast(':')
+                    if (id.isNotEmpty() && id.all { it.isDigit() }) {
+                        queryFilesDataById(context, id)?.let { return it }
+                    }
                 }
                 "com.android.providers.media.documents" -> {
-                    val split = docId.split(":")
-                    if (split.size > 1) {
-                        val id = split[1]
-                        val contentUri = MediaStore.Files.getContentUri("external")
-                        val selection = MediaStore.Files.FileColumns._ID + "=?"
-                        context.contentResolver.query(
-                            contentUri,
-                            arrayOf(MediaStore.MediaColumns.DATA),
-                            selection,
-                            arrayOf(id),
-                            null
-                        )?.use { cursor ->
-                            if (cursor.moveToFirst()) {
-                                val idx = cursor.getColumnIndex(MediaStore.MediaColumns.DATA)
-                                if (idx != -1) return cursor.getString(idx)
-                            }
-                        }
+                    val id = docId.substringAfterLast(':')
+                    if (id.isNotEmpty()) {
+                        queryFilesDataById(context, id)?.let { return it }
                     }
                 }
             }
@@ -665,6 +684,31 @@ class ShredderViewModel(application: Application) : AndroidViewModel(application
             // Fall through to null
         }
         return null
+    }
+
+    /**
+     * Resolves a MediaStore Files _ID to its real on-disk DATA path. Used to turn a
+     * downloads/media document id (e.g. "msf:1234") into a path so the file can be
+     * physically unlinked with File.delete() when "All files access" is granted.
+     */
+    private fun queryFilesDataById(context: android.content.Context, id: String): String? {
+        return try {
+            val contentUri = MediaStore.Files.getContentUri("external")
+            context.contentResolver.query(
+                contentUri,
+                arrayOf(MediaStore.MediaColumns.DATA),
+                MediaStore.Files.FileColumns._ID + "=?",
+                arrayOf(id),
+                null
+            )?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val idx = cursor.getColumnIndex(MediaStore.MediaColumns.DATA)
+                    if (idx != -1) cursor.getString(idx) else null
+                } else null
+            }
+        } catch (e: Exception) {
+            null
+        }
     }
 
     private fun getFilePathFromUri(context: android.content.Context, uri: Uri): String? {
@@ -1066,6 +1110,7 @@ class ShredderViewModel(application: Application) : AndroidViewModel(application
     private suspend fun executePhysicalFileShredding(
         filePath: String,
         algorithm: ShredAlgorithm,
+        unlink: Boolean = true,
         onProgressUpdate: (pass: Int, total: Int, progressPercentage: Float, logMessage: String) -> Unit
     ): Boolean {
         val file = File(filePath)
@@ -1145,9 +1190,17 @@ class ShredderViewModel(application: Application) : AndroidViewModel(application
                 fileChannel.force(true)
             }
 
+            // Overwrite-only mode: the caller (Files tab) handles the actual unlink so it can
+            // prefer the system delete-confirmation modal and keep the MediaStore index clean.
+            if (!unlink) {
+                onProgressUpdate(totalPasses, totalPasses, 100f, "Overwrite complete; handing off to delete handler...")
+                return true
+            }
+
             val deleted = file.delete()
             if (deleted || !file.exists()) {
                 onProgressUpdate(algorithm.totalPasses, algorithm.totalPasses, 100f, "SUCCESS: File wiped & destroyed physically.")
+                notifyMediaStoreDeleted(getApplication(), filePath)
                 return true
             } else {
                 // Try resolving to content URI and deleting
@@ -1157,6 +1210,7 @@ class ShredderViewModel(application: Application) : AndroidViewModel(application
                         val count = getApplication<Application>().contentResolver.delete(contentUri, null, null)
                         if (count > 0 || !file.exists()) {
                             onProgressUpdate(algorithm.totalPasses, algorithm.totalPasses, 100f, "SUCCESS: File wiped & destroyed via resolver query.")
+                            notifyMediaStoreDeleted(getApplication(), filePath)
                             return true
                         }
                     }
@@ -1166,6 +1220,7 @@ class ShredderViewModel(application: Application) : AndroidViewModel(application
 
                 if (!file.exists()) {
                     onProgressUpdate(algorithm.totalPasses, algorithm.totalPasses, 100f, "SUCCESS: File wiped & destroyed physically.")
+                    notifyMediaStoreDeleted(getApplication(), filePath)
                     return true
                 }
 
@@ -1176,6 +1231,29 @@ class ShredderViewModel(application: Application) : AndroidViewModel(application
             onProgressUpdate(0, algorithm.totalPasses, 0f, "Error during shred block: ${e.localizedMessage}")
             e.printStackTrace()
             return false
+        }
+    }
+
+    /**
+     * Removes a deleted file's stale row from the MediaStore index and re-scans the path so
+     * it stops appearing in Files / Gallery. A bare File.delete() removes the bytes but leaves
+     * the MediaStore entry behind, which is why a "shredded" file can still look present.
+     */
+    private fun notifyMediaStoreDeleted(context: android.content.Context, filePath: String) {
+        try {
+            val uri = MediaStore.Files.getContentUri("external")
+            context.contentResolver.delete(
+                uri,
+                MediaStore.Files.FileColumns.DATA + "=?",
+                arrayOf(filePath)
+            )
+        } catch (e: Exception) {
+            // Row may not exist or be owned by another app; the scan below still helps.
+        }
+        try {
+            android.media.MediaScannerConnection.scanFile(context, arrayOf(filePath), null, null)
+        } catch (e: Exception) {
+            // Best-effort; ignore.
         }
     }
 
