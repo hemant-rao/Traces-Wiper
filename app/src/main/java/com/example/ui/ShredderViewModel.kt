@@ -4,6 +4,7 @@ import android.app.Application
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
+import android.os.ParcelFileDescriptor
 import android.provider.DocumentsContract
 import android.provider.MediaStore
 import android.provider.OpenableColumns
@@ -17,6 +18,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.io.File
 import java.io.FileOutputStream
@@ -246,16 +248,14 @@ class ShredderViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun addLog(message: String) {
-        val currentLogs = _progressState.value.logs.toMutableList()
-        currentLogs.add(message)
-        // Cap logs at 100 entries for performance
-        if (currentLogs.size > 100) {
-            currentLogs.removeAt(0)
-        }
-        _progressState.value = _progressState.value.copy(logs = currentLogs)
+        // Atomic CAS update so concurrent onProgressUpdate copies can't drop log entries.
+        // Cap logs at 100 entries for performance.
+        _progressState.update { it.copy(logs = (it.logs + message).takeLast(100)) }
     }
 
     fun startShredding() {
+        // Re-entrancy guard: isShredding is set synchronously below before launch.
+        if (_progressState.value.isShredding) return
         val filesToShred = _selectedFiles.value
         if (filesToShred.isEmpty()) return
 
@@ -272,76 +272,89 @@ class ShredderViewModel(application: Application) : AndroidViewModel(application
             var bytesWipedInSession = 0L
             var successCount = 0
 
-            for (i in filesToShred.indices) {
-                val fileInfo = filesToShred[i]
-                _progressState.value = _progressState.value.copy(
-                    currentFileName = fileInfo.name,
-                    currentFileIndex = i + 1,
-                    currentPass = 0,
-                    passProgress = 0f
-                )
+            try {
+                for (i in filesToShred.indices) {
+                    val fileInfo = filesToShred[i]
+                    _progressState.value = _progressState.value.copy(
+                        currentFileName = fileInfo.name,
+                        currentFileIndex = i + 1,
+                        currentPass = 0,
+                        passProgress = 0f
+                    )
+
+                    addLog("──────────────────────────────────────")
+                    addLog("[File ${i + 1}/${filesToShred.size}] target: ${fileInfo.name} (${formatSize(fileInfo.size)})")
+
+                    val wipedBytes = executeShredding(
+                        context = context,
+                        uri = fileInfo.uri,
+                        fileName = fileInfo.name,
+                        fileSize = fileInfo.size,
+                        algorithm = algo
+                    ) { pass, totalPasses, percent, msg ->
+                        _progressState.value = _progressState.value.copy(
+                            currentPass = pass,
+                            totalPasses = totalPasses,
+                            passProgress = percent
+                        )
+                        addLog(msg)
+                    }
+
+                    if (wipedBytes >= 0L) {
+                        successCount++
+                        // Use the real number of bytes overwritten (statSize), which is reliable
+                        // even when the SAF provider reports SIZE = 0. Fall back to the SAF size
+                        // only if the real size is somehow unavailable.
+                        val realSize = if (wipedBytes > 0L) wipedBytes else fileInfo.size
+                        bytesWipedInSession += realSize
+
+                        // Insert into DB history
+                        val obfuscatedName = obfuscateFileName(fileInfo.name)
+                        try {
+                            repository.insert(
+                                ShredHistory(
+                                    fileName = obfuscatedName,
+                                    originalSize = realSize,
+                                    algorithm = algo.name,
+                                    passes = algo.totalPasses
+                                )
+                            )
+                        } catch (e: Exception) {
+                            e.printStackTrace()
+                        }
+                    } else {
+                        addLog("⚠️ ${fileInfo.name}: could not be fully shredded (data may have been overwritten but the file could not be opened for writing or could not be unlinked). Grant 'All files access' to fully remove it.")
+                    }
+                }
 
                 addLog("──────────────────────────────────────")
-                addLog("[File ${i + 1}/${filesToShred.size}] target: ${fileInfo.name} (${formatSize(fileInfo.size)})")
+                addLog("✅ Session Finished! Shredded $successCount/${filesToShred.size} files successfully.")
+                addLog("Wiped total ${formatSize(bytesWipedInSession)} of block storage safely.")
+                addLog("All overwritten spaces are mathematically unrecoverable.")
 
-                val shredSuccess = executeShredding(
-                    context = context,
-                    uri = fileInfo.uri,
-                    fileName = fileInfo.name,
-                    fileSize = fileInfo.size,
-                    algorithm = algo
-                ) { pass, totalPasses, percent, msg ->
-                    _progressState.value = _progressState.value.copy(
-                        currentPass = pass,
-                        totalPasses = totalPasses,
-                        passProgress = percent
-                    )
-                    addLog(msg)
-                }
+                _progressState.value = _progressState.value.copy(
+                    currentFileName = "",
+                    currentPass = 0,
+                    totalPasses = 0,
+                    passProgress = 100f,
+                    totalSuccessCount = successCount,
+                    totalBytesWipedInSession = bytesWipedInSession
+                )
 
-                if (shredSuccess) {
-                    successCount++
-                    bytesWipedInSession += fileInfo.size
-                    
-                    // Insert into DB history
-                    val obfuscatedName = obfuscateFileName(fileInfo.name)
-                    try {
-                        repository.insert(
-                            ShredHistory(
-                                fileName = obfuscatedName,
-                                originalSize = fileInfo.size,
-                                algorithm = algo.name,
-                                passes = algo.totalPasses
-                            )
-                        )
-                    } catch (e: Exception) {
-                        e.printStackTrace()
-                    }
-                } else {
-                    addLog("⚠️ Failed to shred ${fileInfo.name} completely. File might be write-locked or read-only.")
-                }
+                // Auto-clear file selections on success
+                _selectedFiles.value = emptyList()
+            } finally {
+                // Always release the shredding flag so the UI never gets stuck on a spinner.
+                _progressState.value = _progressState.value.copy(isShredding = false)
             }
-
-            addLog("──────────────────────────────────────")
-            addLog("✅ Session Finished! Shredded $successCount/${filesToShred.size} files successfully.")
-            addLog("Wiped total ${formatSize(bytesWipedInSession)} of block storage safely.")
-            addLog("All overwritten spaces are mathematically unrecoverable.")
-
-            _progressState.value = _progressState.value.copy(
-                isShredding = false,
-                currentFileName = "",
-                currentPass = 0,
-                totalPasses = 0,
-                passProgress = 100f,
-                totalSuccessCount = successCount,
-                totalBytesWipedInSession = bytesWipedInSession
-            )
-
-            // Auto-clear file selections on success
-            _selectedFiles.value = emptyList()
         }
     }
 
+    /**
+     * Overwrites and deletes a SAF document.
+     * Returns the actual number of bytes overwritten on success (>= 0),
+     * or -1L on failure so the caller never reports false success or zero-byte totals.
+     */
     private suspend fun executeShredding(
         context: android.content.Context,
         uri: Uri,
@@ -349,74 +362,99 @@ class ShredderViewModel(application: Application) : AndroidViewModel(application
         fileSize: Long,
         algorithm: ShredAlgorithm,
         onProgressUpdate: (pass: Int, totalPasses: Int, progressPercentage: Float, logMessage: String) -> Unit
-    ): Boolean {
+    ): Long {
         val contentResolver = context.contentResolver
         val actualSize = if (fileSize <= 0) 1024L else fileSize // Minimum 1KB for safety
 
+        // Actual number of bytes overwritten; surfaced back to the caller for accurate reporting.
+        var wipedBytes = -1L
+
         try {
-            contentResolver.openFileDescriptor(uri, "rw")?.use { pfd ->
-                val fileDescriptor = pfd.fileDescriptor
-                val fileChannel = FileOutputStream(fileDescriptor).channel
+            // A read-only / no-write SAF provider returns null here. Without the overwrite
+            // block running we must NOT fall through to deletion and report success.
+            val pfd = contentResolver.openFileDescriptor(uri, "rw")
+            if (pfd == null) {
+                onProgressUpdate(0, algorithm.totalPasses, 0f, "Error: File could not be opened for writing; overwrite aborted.")
+                return -1L
+            }
+            pfd.use { pfd ->
+                // AutoCloseOutputStream owns the fd exactly once; closing it via use {}
+                // also closes the channel, avoiding the double-close + stream leak.
+                ParcelFileDescriptor.AutoCloseOutputStream(pfd).use { aos ->
+                    val fileChannel = aos.channel
 
-                val passes = algorithm.getPassPatterns(actualSize)
-                val totalPasses = passes.size
+                    // Trust the real on-disk length from the descriptor; SAF documents often
+                    // report SIZE = 0, which would otherwise leave most bytes intact.
+                    val realSize = if (pfd.statSize > 0) pfd.statSize else actualSize
+                    wipedBytes = realSize
 
-                val bufferSize = 128 * 1024 // 128KB buffer
-                val buffer = ByteArray(bufferSize)
-                val random = SecureRandom()
+                    val passes = algorithm.getPassPatterns(realSize)
+                    val totalPasses = passes.size
 
-                for (pIdx in 0 until totalPasses) {
-                    val passNum = pIdx + 1
-                    val patternType = passes[pIdx]
-                    
-                    onProgressUpdate(
-                        passNum,
-                        totalPasses,
-                        0f,
-                        "[Pass $passNum/$totalPasses] Overwriting with: ${patternType.description}"
-                    )
+                    val bufferSize = 128 * 1024 // 128KB buffer
+                    val buffer = ByteArray(bufferSize)
+                    val random = SecureRandom()
 
-                    // Seek to start
-                    fileChannel.position(0)
+                    for (pIdx in 0 until totalPasses) {
+                        val passNum = pIdx + 1
+                        val patternType = passes[pIdx]
 
-                    var bytesWritten = 0L
-                    while (bytesWritten < actualSize) {
-                        val remaining = actualSize - bytesWritten
-                        val toWrite = Math.min(bufferSize.toLong(), remaining).toInt()
+                        onProgressUpdate(
+                            passNum,
+                            totalPasses,
+                            0f,
+                            "[Pass $passNum/$totalPasses] Overwriting with: ${patternType.description}"
+                        )
 
-                        when (patternType) {
-                            is PatternType.ZeroField -> buffer.fill(0)
-                            is PatternType.OneField -> buffer.fill(0xFF.toByte())
-                            is PatternType.FixedByte -> buffer.fill(patternType.byteValue)
-                            is PatternType.RandomField -> random.nextBytes(buffer)
+                        // Seek to start
+                        fileChannel.position(0)
+
+                        var bytesWritten = 0L
+                        var lastBucket = -1
+                        while (bytesWritten < realSize) {
+                            val remaining = realSize - bytesWritten
+                            val toWrite = Math.min(bufferSize.toLong(), remaining).toInt()
+
+                            when (patternType) {
+                                is PatternType.ZeroField -> buffer.fill(0)
+                                is PatternType.OneField -> buffer.fill(0xFF.toByte())
+                                is PatternType.FixedByte -> buffer.fill(patternType.byteValue)
+                                is PatternType.RandomField -> random.nextBytes(buffer)
+                            }
+
+                            val byteBuffer = java.nio.ByteBuffer.wrap(buffer, 0, toWrite)
+                            // Drain the buffer fully: FileChannel.write may legally return a
+                            // short count, leaving a trailing region un-overwritten otherwise.
+                            while (byteBuffer.hasRemaining()) {
+                                val n = fileChannel.write(byteBuffer)
+                                if (n <= 0) break
+                            }
+                            bytesWritten += toWrite
+
+                            val percent = (bytesWritten.toFloat() / realSize) * 100f
+                            // Deterministic bucket-change throttle (0/25/50/75) plus final write.
+                            val bucket = (percent / 25f).toInt()
+                            if (bucket != lastBucket || bytesWritten >= realSize) {
+                                lastBucket = bucket
+                                onProgressUpdate(
+                                    passNum,
+                                    totalPasses,
+                                    percent,
+                                    "[Pass $passNum] Wiped ${formatSize(bytesWritten)} / ${formatSize(realSize)} (${percent.toInt()}%)"
+                                )
+                            }
                         }
 
-                        val byteBuffer = java.nio.ByteBuffer.wrap(buffer, 0, toWrite)
-                        fileChannel.write(byteBuffer)
-                        bytesWritten += toWrite
-
-                        val percent = (bytesWritten.toFloat() / actualSize) * 100f
-                        // Throttle progress steps to prevent lagging the UI thread
-                        if (percent % 25 < 1 || toWrite == remaining.toInt()) {
-                            onProgressUpdate(
-                                passNum,
-                                totalPasses,
-                                percent,
-                                "[Pass $passNum] Wiped ${formatSize(bytesWritten)} / ${formatSize(actualSize)} (${percent.toInt()}%)"
-                            )
-                        }
+                        // Flush cache to hardware sector physically
+                        fileChannel.force(true)
+                        delay(50) // Small breather for UI transitions
                     }
 
-                    // Flush cache to hardware sector physically
+                    // Metadata scrubbing & truncation
+                    onProgressUpdate(totalPasses, totalPasses, 100f, "Metadata Scrubbing: Truncating file payload of descriptor...")
+                    fileChannel.truncate(0)
                     fileChannel.force(true)
-                    delay(50) // Small breather for UI transitions
                 }
-
-                // Metadata scrubbing & truncation
-                onProgressUpdate(totalPasses, totalPasses, 100f, "Metadata Scrubbing: Truncating file payload of descriptor...")
-                fileChannel.truncate(0)
-                fileChannel.force(true)
-                fileChannel.close()
             }
 
             // Permanent Document Deletion via Storage Access Framework
@@ -429,7 +467,7 @@ class ShredderViewModel(application: Application) : AndroidViewModel(application
 
             if (deleted) {
                 onProgressUpdate(algorithm.totalPasses, algorithm.totalPasses, 100f, "Success: Shredded & deleted completely.")
-                return true
+                return wipedBytes
             } else {
                 // Secondary deletion attempt via resolver
                 var secondaryDeleted = false
@@ -463,16 +501,19 @@ class ShredderViewModel(application: Application) : AndroidViewModel(application
 
                 if (secondaryDeleted) {
                     onProgressUpdate(algorithm.totalPasses, algorithm.totalPasses, 100f, "Success: Shredded & deleted completely.")
-                    return true
+                    return wipedBytes
                 }
 
                 onProgressUpdate(algorithm.totalPasses, algorithm.totalPasses, 100f, "⚠️ Data overwritten, but file could not be unlinked. Grant 'All files access' permission to fully delete.")
-                return true
+                // The overwrite + truncate(0) fully completed, so the content is irrecoverable.
+                // Only the directory index entry lingers. Report the real wiped byte count so the
+                // caller records the wipe instead of mislabeling a destroyed file as a failure.
+                return wipedBytes
             }
         } catch (e: Exception) {
             onProgressUpdate(0, algorithm.totalPasses, 0f, "Critical Error: ${e.localizedMessage ?: "File locked or inaccessible."}")
             e.printStackTrace()
-            return false
+            return -1L
         }
     }
 
@@ -567,6 +608,7 @@ class ShredderViewModel(application: Application) : AndroidViewModel(application
             val charset = "0123456789ABCDEF!@#$%^&*()_+{}|:<>?-=[]\\;',./"
             val random = SecureRandom()
 
+            try {
             // Run scrambling animation
             repeat(15) { step ->
                 for (i in chars.indices) {
@@ -580,11 +622,12 @@ class ShredderViewModel(application: Application) : AndroidViewModel(application
 
             // Zero out memory of chars securely before GC collects it
             chars.fill('\u0000') // Zero-fill char array!
-            
-            // Clear input and local states completely
-            _notesInput.value = ""
-            _scrambledNotesText.value = ""
-            _isShreddingNote.value = false
+            } finally {
+                // Always release the flag so cancellation/throw never pins the overlay.
+                _notesInput.value = ""
+                _scrambledNotesText.value = ""
+                _isShreddingNote.value = false
+            }
         }
     }
 
@@ -602,7 +645,7 @@ class ShredderViewModel(application: Application) : AndroidViewModel(application
     fun formatSize(bytes: Long): String {
         if (bytes <= 0) return "0 B"
         val units = arrayOf("B", "KB", "MB", "GB", "TB")
-        val digitGroups = (Math.log10(bytes.toDouble()) / Math.log10(1024.0)).toInt()
+        val digitGroups = (Math.log10(bytes.toDouble()) / Math.log10(1024.0)).toInt().coerceIn(0, units.size - 1)
         return String.format("%.2f %s", bytes / Math.pow(1024.0, digitGroups.toDouble()), units[digitGroups])
     }
 
@@ -700,6 +743,7 @@ class ShredderViewModel(application: Application) : AndroidViewModel(application
         _scannedFiles.value = emptyList()
 
         viewModelScope.launch(Dispatchers.IO) {
+          try {
             delay(1200) // Aesthetic delay for search scanning process
             val found = mutableListOf<ScannedFileInfo>()
             val context = getApplication<Application>()
@@ -745,8 +789,10 @@ class ShredderViewModel(application: Application) : AndroidViewModel(application
                                 }
                                 scanDir(file, depth + 1)
                             } else {
-                                if (prefs.getBoolean("sandbox_deleted_${file.name}", false) ||
-                                    prefs.getBoolean("sandbox_deleted_${file.absolutePath}", false) ||
+                                // Filter only on the absolute-path key. The basename key collides
+                                // across directories and would wrongly hide an unrelated real file
+                                // that merely shares a name with a previously-shredded sandbox file.
+                                if (prefs.getBoolean("sandbox_deleted_${file.absolutePath}", false) ||
                                     !file.exists()
                                 ) {
                                     continue
@@ -797,7 +843,11 @@ class ShredderViewModel(application: Application) : AndroidViewModel(application
 
             val uniqueFound = found.distinctBy { it.filePath }
             _scannedFiles.value = uniqueFound
+          } finally {
+            // Always clear the scanning flag so the spinner stops and the button re-enables,
+            // even if the scan is cancelled (e.g. during the leading delay) or throws.
             _isScanning.value = false
+          }
         }
     }
 
@@ -813,6 +863,8 @@ class ShredderViewModel(application: Application) : AndroidViewModel(application
 
     // EXECUTE MILITARY OVERWRITE PROCESS SECURELY ON SELECTED SCANNED TARGETS
     fun startShreddingScannedFiles() {
+        // Re-entrancy guard: isShredding is set synchronously below before launch.
+        if (_progressState.value.isShredding) return
         val selectedScanned = _scannedFiles.value.filter { it.isSelected }
         if (selectedScanned.isEmpty()) return
 
@@ -831,81 +883,88 @@ class ShredderViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch(Dispatchers.IO) {
             var bytesWipedInSession = 0L
             var successCount = 0
+            // Track only the paths that were actually shredded so failed files stay visible.
+            val shreddedPaths = mutableSetOf<String>()
 
-            for (i in selectedScanned.indices) {
-                val fileInfo = selectedScanned[i]
-                _progressState.value = _progressState.value.copy(
-                    currentFileName = fileInfo.name,
-                    currentFileIndex = i + 1,
-                    currentPass = 0,
-                    passProgress = 0f
-                )
+            try {
+                for (i in selectedScanned.indices) {
+                    val fileInfo = selectedScanned[i]
+                    _progressState.value = _progressState.value.copy(
+                        currentFileName = fileInfo.name,
+                        currentFileIndex = i + 1,
+                        currentPass = 0,
+                        passProgress = 0f
+                    )
+
+                    addLog("──────────────────────────────────────")
+                    addLog("[Target ${i + 1}/${selectedScanned.size}] ${fileInfo.name} (${formatSize(fileInfo.size)})")
+
+                    val success = if (fileInfo.filePath != null) {
+                        executePhysicalFileShredding(
+                            filePath = fileInfo.filePath,
+                            algorithm = algo
+                        ) { pass, total, percent, msg ->
+                            _progressState.value = _progressState.value.copy(
+                                currentPass = pass,
+                                totalPasses = total,
+                                passProgress = percent
+                            )
+                            addLog(msg)
+                        }
+                    } else {
+                        false
+                    }
+
+                    if (success) {
+                        successCount++
+                        bytesWipedInSession += fileInfo.size
+                        fileInfo.filePath?.let { shreddedPaths.add(it) }
+
+                        val prefs = getApplication<Application>().getSharedPreferences("shredder_prefs", android.content.Context.MODE_PRIVATE)
+                        prefs.edit()
+                            .putBoolean("sandbox_deleted_${fileInfo.name}", true)
+                            .putBoolean("sandbox_deleted_${fileInfo.filePath}", true)
+                            .apply()
+
+                        val obfuscatedName = obfuscateFileName(fileInfo.name)
+                        try {
+                            repository.insert(
+                                ShredHistory(
+                                    fileName = obfuscatedName,
+                                    originalSize = fileInfo.size,
+                                    algorithm = algo.name,
+                                    passes = algo.totalPasses
+                                )
+                            )
+                        } catch (e: Exception) {
+                            e.printStackTrace()
+                        }
+                    } else {
+                        addLog("⚠️ Shredding error on physical sector path: ${fileInfo.name}")
+                    }
+                }
 
                 addLog("──────────────────────────────────────")
-                addLog("[Target ${i + 1}/${selectedScanned.size}] ${fileInfo.name} (${formatSize(fileInfo.size)})")
+                addLog("✅ Deep Shred complete! $successCount/${selectedScanned.size} assets thoroughly purged in physical storage blocks.")
+                addLog("System registers 0 remnant file signatures remaining.")
 
-                val success = if (fileInfo.filePath != null) {
-                    executePhysicalFileShredding(
-                        filePath = fileInfo.filePath,
-                        algorithm = algo
-                    ) { pass, total, percent, msg ->
-                        _progressState.value = _progressState.value.copy(
-                            currentPass = pass,
-                            totalPasses = total,
-                            passProgress = percent
-                        )
-                        addLog(msg)
-                    }
-                } else {
-                    false
+                _progressState.value = _progressState.value.copy(
+                    currentFileName = "",
+                    currentPass = 0,
+                    totalPasses = 0,
+                    passProgress = 100f,
+                    totalSuccessCount = successCount,
+                    totalBytesWipedInSession = bytesWipedInSession
+                )
+
+                // Remove ONLY the successfully shredded items from the Scanned list so failed
+                // files remain visible and the user can retry them.
+                _scannedFiles.value = _scannedFiles.value.filter { scanned ->
+                    scanned.filePath !in shreddedPaths
                 }
-
-                if (success) {
-                    successCount++
-                    bytesWipedInSession += fileInfo.size
-
-                    val prefs = getApplication<Application>().getSharedPreferences("shredder_prefs", android.content.Context.MODE_PRIVATE)
-                    prefs.edit()
-                        .putBoolean("sandbox_deleted_${fileInfo.name}", true)
-                        .putBoolean("sandbox_deleted_${fileInfo.filePath}", true)
-                        .apply()
-
-                    val obfuscatedName = obfuscateFileName(fileInfo.name)
-                    try {
-                        repository.insert(
-                            ShredHistory(
-                                fileName = obfuscatedName,
-                                originalSize = fileInfo.size,
-                                algorithm = algo.name,
-                                passes = algo.totalPasses
-                            )
-                        )
-                    } catch (e: Exception) {
-                        e.printStackTrace()
-                    }
-                } else {
-                    addLog("⚠️ Shredding error on physical sector path: ${fileInfo.name}")
-                }
-            }
-
-            addLog("──────────────────────────────────────")
-            addLog("✅ Deep Shred complete! $successCount/${selectedScanned.size} assets thoroughly purged in physical storage blocks.")
-            addLog("System registers 0 remnant file signatures remaining.")
-
-            _progressState.value = _progressState.value.copy(
-                isShredding = false,
-                currentFileName = "",
-                currentPass = 0,
-                totalPasses = 0,
-                passProgress = 100f,
-                totalSuccessCount = successCount,
-                totalBytesWipedInSession = bytesWipedInSession
-            )
-
-            // Remove shredded items from the Scanned list
-            _scannedFiles.value = _scannedFiles.value.filter { scanned ->
-                val wasShredded = selectedScanned.any { it.filePath == scanned.filePath }
-                !wasShredded
+            } finally {
+                // Always release the shredding flag so the UI never gets stuck on a spinner.
+                _progressState.value = _progressState.value.copy(isShredding = false)
             }
         }
     }
@@ -948,6 +1007,7 @@ class ShredderViewModel(application: Application) : AndroidViewModel(application
                     fileChannel.position(0)
 
                     var bytesWritten = 0L
+                    var lastBucket = -1
                     while (bytesWritten < actualSize) {
                         val remaining = actualSize - bytesWritten
                         val toWrite = Math.min(bufferSize.toLong(), remaining).toInt()
@@ -960,11 +1020,19 @@ class ShredderViewModel(application: Application) : AndroidViewModel(application
                         }
 
                         val byteBuffer = java.nio.ByteBuffer.wrap(buffer, 0, toWrite)
-                        fileChannel.write(byteBuffer)
+                        // Drain the buffer fully: FileChannel.write may legally return a
+                        // short count, leaving a trailing region un-overwritten otherwise.
+                        while (byteBuffer.hasRemaining()) {
+                            val n = fileChannel.write(byteBuffer)
+                            if (n <= 0) break
+                        }
                         bytesWritten += toWrite
 
                         val percent = (bytesWritten.toFloat() / actualSize) * 100f
-                        if (percent % 25 < 1 || toWrite == remaining.toInt()) {
+                        // Deterministic bucket-change throttle (0/25/50/75) plus final write.
+                        val bucket = (percent / 25f).toInt()
+                        if (bucket != lastBucket || bytesWritten >= actualSize) {
+                            lastBucket = bucket
                             onProgressUpdate(
                                 passNum,
                                 totalPasses,
@@ -1054,16 +1122,20 @@ class ShredderViewModel(application: Application) : AndroidViewModel(application
         )
 
         viewModelScope.launch(Dispatchers.IO) {
+          try {
             val context = getApplication<Application>()
-            
+
+            // Tracks whether at least one concrete action actually completed.
+            var wipeSucceeded = false
+
             val steps = listOf(
-                "Initializing cluster index check..." to 0.12f,
-                "Analyzing file system logs and journal records..." to 0.25f,
-                "Searching MediaStore hidden Trash indices within target date range..." to 0.38f,
-                "Scrubbing database references for deleted documents with dates in window..." to 0.5f,
-                "Generating physical flash-block overwrite vector inside local storage..." to 0.65f,
-                "Writing 20.0 MB localized entropy buffer to unallocated space..." to 0.82f,
-                "Flushing cell plates to shatter ghost voltage signatures..." to 0.92f,
+                "Initializing storage index check..." to 0.12f,
+                "Scanning deleted-file references in selected window..." to 0.25f,
+                "Searching MediaStore Trash indices within target date range..." to 0.38f,
+                "Purging trashed media entries within window..." to 0.5f,
+                "Preparing reclaimable free-space overwrite buffer..." to 0.65f,
+                "Overwriting reclaimable free-space token (20.0 MB entropy buffer)..." to 0.82f,
+                "Flushing buffered writes to storage..." to 0.92f,
                 "Releasing space buffers & forcing garbage collector purge..." to 1.0f
             )
 
@@ -1074,15 +1146,30 @@ class ShredderViewModel(application: Application) : AndroidViewModel(application
                     val projection = arrayOf("_id", "_display_name")
                     val selection = "is_trashed = 1 AND date_modified >= ? AND date_modified <= ?"
                     val selectionArgs = arrayOf((startDateMs / 1000).toString(), (endDateMs / 1000).toString())
-                    
-                    context.contentResolver.query(trashUri, projection, selection, selectionArgs, null)?.use { cursor ->
+
+                    // MediaStore excludes trashed items from results by default (MATCH_DEFAULT).
+                    // Pass MATCH_INCLUDE via a query Bundle so the is_trashed=1 rows are returned.
+                    val queryArgs = android.os.Bundle().apply {
+                        putString(android.content.ContentResolver.QUERY_ARG_SQL_SELECTION, selection)
+                        putStringArray(android.content.ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS, selectionArgs)
+                        putInt(MediaStore.QUERY_ARG_MATCH_TRASHED, MediaStore.MATCH_INCLUDE)
+                    }
+
+                    context.contentResolver.query(trashUri, projection, queryArgs, null)?.use { cursor ->
                         val count = cursor.count
                         addSweepLog("♻️ Found $count media items in system Trash directory within date range.")
                         if (count > 0) {
                             addSweepLog("Deleting trashed elements securely...")
                             try {
-                                context.contentResolver.delete(trashUri, selection, selectionArgs)
-                                addSweepLog("✅ Successfully purged $count trashed objects from physical indices.")
+                                // delete() on R+ typically requires user consent and may purge 0
+                                // rows silently; only count success when rows were actually removed.
+                                val deletedRows = context.contentResolver.delete(trashUri, selection, selectionArgs)
+                                if (deletedRows > 0) {
+                                    wipeSucceeded = true
+                                    addSweepLog("✅ Successfully purged $deletedRows trashed objects from media indices.")
+                                } else {
+                                    addSweepLog("⚠️ Trashed entries require user consent to purge. Attempting cache scrub instead.")
+                                }
                             } catch (de: Exception) {
                                 addSweepLog("⚠️ Auto-trash purge restriction. Attempting cache scrub instead.")
                             }
@@ -1115,7 +1202,8 @@ class ShredderViewModel(application: Application) : AndroidViewModel(application
                             }
                         }
                         if (deletedCount > 0) {
-                            addSweepLog("🧼 Purged $deletedCount sandbox demo files within target date window [$startStr - $endStr] from memory partitions.")
+                            wipeSucceeded = true
+                            addSweepLog("🧼 Purged $deletedCount sandbox demo files within target date window [$startStr - $endStr] from storage.")
                         }
                     }
                 }
@@ -1128,7 +1216,7 @@ class ShredderViewModel(application: Application) : AndroidViewModel(application
                 _sweepProgress.value = progress
                 addSweepLog(msg)
 
-                if (msg.contains("Writing 20.0 MB")) {
+                if (msg.contains("20.0 MB")) {
                     try {
                         val tempFile = File(context.cacheDir, "secure_entropy_wipe_v${System.currentTimeMillis()}.bin")
                         val sizeToOverwrite = 20 * 1024 * 1024L // 20 MB size
@@ -1146,41 +1234,51 @@ class ShredderViewModel(application: Application) : AndroidViewModel(application
                             fos.channel.force(true)
                         }
                         tempFile.delete()
-                        addSweepLog("🚀 Physical block overwriting of local unallocated sector buffers succeeded.")
+                        wipeSucceeded = true
+                        addSweepLog("🚀 Reclaimable free-space overwrite of local storage buffers completed.")
+                    } catch (e: java.io.IOException) {
+                        // Free-space overwrite failed; do not count it as a success.
+                        addSweepLog("⚠️ Free-space overwrite warning: ${e.message}")
                     } catch (e: Exception) {
-                        addSweepLog("⚠️ Sector write warning: ${e.message}")
+                        addSweepLog("⚠️ Free-space overwrite warning: ${e.message}")
                     }
                 }
             }
 
             delay(800)
             addSweepLog("---------------------------------------")
-            addSweepLog("✅ DEEP WIPING COMPLETED SUCCESSFULLY!")
-            addSweepLog("All unallocated file traces within window [$startStr to $endStr] have been overwritten physically.")
-            addSweepLog("Ghost memory residues on NAND gates are mathematically neutralized.")
-            
             _sweepProgress.value = 1.0f
-            
-            try {
-                repository.insert(
-                    ShredHistory(
-                        fileName = "Deep Wipe Sweep [$startStr ~ $endStr]",
-                        originalSize = 20 * 1024 * 1024L,
-                        algorithm = "Entropy Sweep",
-                        passes = 1
+
+            if (wipeSucceeded) {
+                addSweepLog("✅ DEEP WIPING COMPLETED SUCCESSFULLY!")
+                addSweepLog("Reclaimable free space within window [$startStr to $endStr] was overwritten and trashed entries were purged.")
+
+                try {
+                    repository.insert(
+                        ShredHistory(
+                            fileName = "Deep Wipe Sweep [$startStr ~ $endStr]",
+                            originalSize = 20 * 1024 * 1024L,
+                            algorithm = "Entropy Sweep",
+                            passes = 1
+                        )
                     )
-                )
-            } catch (e: Exception) {
-                e.printStackTrace()
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            } else {
+                addSweepLog("⚠️ Deep wipe could not complete free-space overwrite on this device.")
+                addSweepLog("No reclaimable free space was overwritten and no trashed entries were found in the selected window.")
             }
             delay(1200)
+          } finally {
+            // Always clear the deep-wipe flag so the UI never gets stuck on a spinner.
             _isDeepWiping.value = false
+          }
         }
     }
 
     private fun addSweepLog(msg: String) {
-        val current = _sweepLogs.value.toMutableList()
-        current.add(msg)
-        _sweepLogs.value = current
+        // Atomic CAS update so concurrent emissions can't drop sweep log entries.
+        _sweepLogs.update { it + msg }
     }
 }

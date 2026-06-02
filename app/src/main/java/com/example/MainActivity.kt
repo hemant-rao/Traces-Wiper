@@ -327,7 +327,7 @@ fun ShredderAppScreen(
         // Modern low-profile dashboard stats block
         SecureHeader(
             historyCount = historyLog.size,
-            totalBytesShredded = historyLog.sumOf { it.originalSize },
+            totalBytesShredded = historyLog.fold(0L) { acc, h -> val n = acc + h.originalSize.coerceAtLeast(0L); if (n < acc) Long.MAX_VALUE else n },
             securityScore = if (historyLog.isEmpty()) "0%" else if (historyLog.any { it.passes >= 3 }) "A++ SECURE" else "BASIC"
         )
 
@@ -412,7 +412,7 @@ fun ShredderAppScreen(
     }
 
     // Full-Page Overlay Cyber-Security Process Loader Overlay
-    if (progressState.isShredding || isScanning || isDeepWiping || isShreddingNote) {
+    if (isScanning || isDeepWiping || isShreddingNote || (progressState.isShredding && selectedTab == 2)) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -782,7 +782,7 @@ fun SecureHeader(
                     .background(SlateBorder)
             )
             DashboardStat(
-                label = "FORENSIC GRADE",
+                label = "MILITARY GRADE",
                 value = securityScore,
                 accentColor = NeonGreen,
                 modifier = Modifier.weight(1f)
@@ -855,7 +855,7 @@ fun FileShredderTab(
     }
 
     // Auto-scroll console logs to bottom
-    LaunchedEffect(progressState.logs.size) {
+    LaunchedEffect(progressState.logs.lastOrNull()) {
         if (progressState.logs.isNotEmpty()) {
             lazyListState.animateScrollToItem(progressState.logs.size - 1)
         }
@@ -990,7 +990,7 @@ fun FileShredderTab(
                         Text(
                             text = log,
                             color = when {
-                                log.startsWith("ERROR") || log.startsWith("Crit") || log.contains("failed") -> LaserRed
+                                log.startsWith("ERROR") || log.startsWith("Crit") || log.contains("failed", ignoreCase = true) || log.startsWith("⚠️") -> LaserRed
                                 log.startsWith("✅") || log.contains("Success") || log.contains("successfully") -> NeonGreen
                                 log.startsWith("[Pass") || log.contains("PASS") -> ElectricAmber
                                 else -> if (ThemeState.isDarkTheme) TextPrimary.copy(alpha = 0.85f) else Color(0xFFE2E8F0)
@@ -1032,7 +1032,7 @@ fun FileShredderTab(
                         )
                         Spacer(modifier = Modifier.width(10.dp))
                         Text(
-                            text = "WARNING: Secure Shredding overwrites raw block partitions. Deleted materials are FORENSICALLY UNRECOVERABLE by any hardware or software methods. Use with absolute caution.",
+                            text = "WARNING: Secure Shredding overwrites file data with multiple random passes before deletion. Deleted materials are PERMANENTLY UNRECOVERABLE by any hardware or software methods. Use with absolute caution.",
                             color = LaserRed,
                             fontSize = 11.sp,
                             lineHeight = 15.sp,
@@ -1194,7 +1194,7 @@ fun FileShredderTab(
                 }
             }
 
-            // Attacker-Resistant Security Shield Status (Replaces raw algorithm selections)
+            // Active overwrite algorithm selector (wires onAlgoSelected / currentAlgo)
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -1216,51 +1216,87 @@ fun FileShredderTab(
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                "SECURE SHIELD ACTIVE",
+                                "OVERWRITE ALGORITHM",
                                 color = TextPrimary,
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Bold,
                                 fontFamily = FontFamily.SansSerif
                             )
                         }
-                        
-                        Spacer(modifier = Modifier.height(10.dp))
-                        
-                        val securityFeatures = listOf(
-                            "Memory Sanitizer" to "Zero-out RAM buffers immediately after shredding to prevent Heap dumps & memory hacking attacks.",
-                            "Anti-Tamper Control" to "Monitors background threats during deletion sequences to enforce physical data quarantine.",
-                            "Permanent Erasure" to "Raw partition-level overwrites to ensure no software or restore utilities can recover the deleted records."
+
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            "Select the multi-pass standard used to overwrite file data before deletion.",
+                            color = TextSecondary,
+                            fontSize = 10.sp,
+                            lineHeight = 13.sp,
+                            fontFamily = FontFamily.SansSerif
                         )
-                        
-                        securityFeatures.forEach { (title, desc) ->
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 4.dp),
-                                verticalAlignment = Alignment.Top
-                            ) {
-                                Box(
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        val algorithms = listOf(
+                            ShredAlgorithm.ZeroFill,
+                            ShredAlgorithm.DoD3Pass,
+                            ShredAlgorithm.DoD7Pass,
+                            ShredAlgorithm.Gutmann
+                        )
+
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            algorithms.forEach { algo ->
+                                val isSelected = algo == currentAlgo
+                                Row(
                                     modifier = Modifier
-                                        .padding(top = 4.dp)
-                                        .size(6.dp)
-                                        .background(NeonGreen, RoundedCornerShape(3.dp))
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Column {
-                                    Text(
-                                        title,
-                                        color = TextPrimary,
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        fontFamily = FontFamily.SansSerif
-                                    )
-                                    Text(
-                                        desc,
-                                        color = TextSecondary,
-                                        fontSize = 10.sp,
-                                        lineHeight = 13.sp,
-                                        fontFamily = FontFamily.SansSerif
-                                    )
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(
+                                            if (isSelected) NeonGreen.copy(alpha = 0.12f) else CarbonDarkBg,
+                                            RoundedCornerShape(8.dp)
+                                        )
+                                        .border(
+                                            1.dp,
+                                            if (isSelected) NeonGreen else SlateBorder,
+                                            RoundedCornerShape(8.dp)
+                                        )
+                                        .clickable { onAlgoSelected(algo) }
+                                        .padding(horizontal = 12.dp, vertical = 10.dp)
+                                        .testTag("algo_option_${algo.name}"),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = algo.name,
+                                            color = if (isSelected) NeonGreen else TextPrimary,
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            fontFamily = FontFamily.Monospace,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Text(
+                                            text = algo.securityLevel,
+                                            color = TextSecondary,
+                                            fontSize = 10.sp,
+                                            fontFamily = FontFamily.SansSerif
+                                        )
+                                    }
+                                    Box(
+                                        modifier = Modifier
+                                            .background(
+                                                (if (isSelected) NeonGreen else TextSecondary).copy(alpha = 0.12f),
+                                                RoundedCornerShape(4.dp)
+                                            )
+                                            .padding(horizontal = 6.dp, vertical = 3.dp)
+                                    ) {
+                                        Text(
+                                            text = "${algo.totalPasses}P",
+                                            color = if (isSelected) NeonGreen else TextSecondary,
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            fontFamily = FontFamily.Monospace
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -1342,6 +1378,7 @@ fun TextWiperTab(viewModel: ShredderViewModel) {
     val notesInput by viewModel.notesInput.collectAsStateWithLifecycle()
     val isShreddingNote by viewModel.isShreddingNote.collectAsStateWithLifecycle()
     val scrambledText by viewModel.scrambledNotesText.collectAsStateWithLifecycle()
+    val progressState by viewModel.progressState.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val scrollState = rememberScrollState()
 
@@ -1382,7 +1419,7 @@ fun TextWiperTab(viewModel: ShredderViewModel) {
 
         // Input field
         OutlinedTextField(
-            value = if (isShreddingNote) scrambledText else notesInput,
+            value = notesInput,
             onValueChange = {
                 if (!isShreddingNote) {
                     viewModel.updateNotesInput(it)
@@ -1395,7 +1432,7 @@ fun TextWiperTab(viewModel: ShredderViewModel) {
                 .testTag("secret_notes_input"),
             textStyle = MaterialTheme.typography.bodyMedium.copy(
                 fontFamily = FontFamily.Monospace,
-                color = if (isShreddingNote) NeonGreen else TextPrimary
+                color = TextPrimary
             ),
             placeholder = {
                 Text(
@@ -1414,7 +1451,7 @@ fun TextWiperTab(viewModel: ShredderViewModel) {
             shape = RoundedCornerShape(8.dp)
         )
 
-        val buttonEnabled = notesInput.isNotEmpty() && !isShreddingNote
+        val buttonEnabled = notesInput.isNotEmpty() && !isShreddingNote && !progressState.isShredding
         HoldToConfirmButton(
             enabled = buttonEnabled,
             onConfirmed = {
@@ -1480,6 +1517,22 @@ fun ShredHistoryTab(
     onClearAll: () -> Unit,
     viewModel: ShredderViewModel
 ) {
+    var showClearDialog by remember { mutableStateOf(false) }
+
+    if (showClearDialog) {
+        CyberConfirmDialog(
+            title = "CLEAR HISTORY",
+            message = "This will permanently erase all wipe records. This action cannot be undone.",
+            confirmText = "CONFIRM AND EXECUTE",
+            cancelText = "ABORT PROTOCOL",
+            onConfirm = {
+                onClearAll()
+                showClearDialog = false
+            },
+            onDismiss = { showClearDialog = false }
+        )
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -1507,7 +1560,7 @@ fun ShredHistoryTab(
                     fontWeight = FontWeight.Bold,
                     fontFamily = FontFamily.Monospace,
                     modifier = Modifier
-                        .clickable { onClearAll() }
+                        .clickable { showClearDialog = true }
                         .padding(8.dp)
                         .testTag("clear_history_log_button")
                 )
@@ -1611,7 +1664,7 @@ fun ShredHistoryTab(
                             )
                             Spacer(modifier = Modifier.height(2.dp))
                             Text(
-                                text = "VERIFIED INTACT",
+                                text = "WIPE VERIFIED",
                                 color = TerminalCyan,
                                 fontSize = 8.sp,
                                 fontWeight = FontWeight.Bold,
@@ -1688,7 +1741,7 @@ data class GuideItem(val title: String, val contents: String)
 fun formatBytes(bytes: Long): String {
     if (bytes <= 0) return "0 B"
     val units = arrayOf("B", "KB", "MB", "GB", "TB")
-    val digitGroups = (Math.log10(bytes.toDouble()) / Math.log10(1024.0)).toInt()
+    val digitGroups = (Math.log10(bytes.toDouble()) / Math.log10(1024.0)).toInt().coerceIn(0, units.size - 1)
     return String.format("%.1f %s", bytes / Math.pow(1024.0, digitGroups.toDouble()), units[digitGroups])
 }
 
@@ -2140,8 +2193,7 @@ fun DeepWipeTab(viewModel: ShredderViewModel) {
         }
 
         // Sub views depending on sub-tab index selection
-        val startMs = getMillisForDate(startYear, startMonth, startDay, false)
-        val endMs = getMillisForDate(endYear, endMonth, endDay, true)
+        // (startMs / endMs are the remembered values declared above)
 
         if (subTab == 0) {
             // Option 1: Search & Destroy Configurator
@@ -2327,7 +2379,8 @@ fun DeepWipeTab(viewModel: ShredderViewModel) {
                         ) {
                             CyberCheckbox(
                                 checked = file.isSelected,
-                                onCheckedChange = { viewModel.toggleScannedFileSelected(index) }
+                                onCheckedChange = { viewModel.toggleScannedFileSelected(index) },
+                                enabled = !isAnyProcessRunning
                             )
 
                             Spacer(modifier = Modifier.width(12.dp))
@@ -2402,7 +2455,7 @@ fun DeepWipeTab(viewModel: ShredderViewModel) {
                         Icon(imageVector = Icons.Default.Info, contentDescription = null, tint = TextSecondary, modifier = Modifier.size(32.dp))
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            "Select date and category scope, then click 'SCAN LOCAL DIRECTORIES' to inspect file nodes.",
+                            "Select date and category scope, then tap SCAN SELECTED DATE RANGE to inspect file nodes.",
                             color = TextSecondary,
                             fontSize = 11.sp,
                             textAlign = TextAlign.Center,
@@ -2412,7 +2465,7 @@ fun DeepWipeTab(viewModel: ShredderViewModel) {
                 }
             }
         } else {
-            // Option 2: Deep Sector Wipe (Old Forensic Space Overwriter)
+            // Option 2: Deep Sector Wipe (Legacy Secure Space Overwriter)
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -2526,14 +2579,15 @@ fun DeepWipeTab(viewModel: ShredderViewModel) {
 @Composable
 fun CyberCheckbox(
     checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit
+    onCheckedChange: (Boolean) -> Unit,
+    enabled: Boolean = true
 ) {
     Box(
         modifier = Modifier
             .size(18.dp)
             .background(if (checked) NeonGreen.copy(alpha = 0.15f) else Color.Transparent, RoundedCornerShape(6.dp))
             .border(1.5.dp, if (checked) NeonGreen else SlateBorder, RoundedCornerShape(6.dp))
-            .clickable { onCheckedChange(!checked) },
+            .clickable(enabled = enabled) { onCheckedChange(!checked) },
         contentAlignment = Alignment.Center
     ) {
         if (checked) {
