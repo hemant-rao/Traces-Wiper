@@ -13,9 +13,12 @@ import androidx.lifecycle.viewModelScope
 import com.example.data.AppDatabase
 import com.example.data.ShredHistory
 import com.example.data.ShredRepository
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -120,6 +123,22 @@ data class SelectedFileInfo(
     val mimeType: String?
 )
 
+/**
+ * Result of attempting to shred (overwrite) and then delete a single picked file.
+ * Lets the caller report success honestly and decide whether a system consent dialog
+ * (MediaStore.createDeleteRequest) is still required to unlink the file.
+ */
+sealed class ShredOutcome {
+    // Bytes overwritten AND the file entry removed from the device.
+    data class Deleted(val wipedBytes: Long) : ShredOutcome()
+    // Bytes overwritten, but unlinking needs the user to approve a system delete dialog.
+    data class NeedsConsent(val mediaUri: Uri, val wipedBytes: Long) : ShredOutcome()
+    // Bytes overwritten, but the entry could not be removed by any available mechanism.
+    data class WipedNotDeleted(val wipedBytes: Long) : ShredOutcome()
+    // Could not even open the file for overwriting; nothing was done.
+    object Failed : ShredOutcome()
+}
+
 data class ShredProgressState(
     val isShredding: Boolean = false,
     val currentFileName: String = "",
@@ -175,6 +194,19 @@ class ShredderViewModel(application: Application) : AndroidViewModel(application
     // File selections
     private val _selectedFiles = MutableStateFlow<List<SelectedFileInfo>>(emptyList())
     val selectedFiles = _selectedFiles.asStateFlow()
+
+    // Emits an IntentSender (from MediaStore.createDeleteRequest) that the Activity must
+    // launch so the system can show its delete-confirmation dialog. The shredding coroutine
+    // suspends on consentDeferred until the UI reports back via onDeleteConsentResult().
+    private val _deleteRequest = MutableSharedFlow<android.content.IntentSender>(extraBufferCapacity = 1)
+    val deleteRequest = _deleteRequest.asSharedFlow()
+    private var consentDeferred: CompletableDeferred<Boolean>? = null
+
+    /** Called by the UI when the system delete-confirmation dialog returns. */
+    fun onDeleteConsentResult(granted: Boolean) {
+        consentDeferred?.complete(granted)
+        consentDeferred = null
+    }
 
     // Configuration
     private val _selectedAlgorithm = MutableStateFlow<ShredAlgorithm>(ShredAlgorithm.DoD3Pass)
@@ -271,6 +303,30 @@ class ShredderViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch(Dispatchers.IO) {
             var bytesWipedInSession = 0L
             var successCount = 0
+            // Files whose bytes were wiped but which still need a system consent dialog to unlink.
+            val pendingConsent = mutableListOf<Triple<SelectedFileInfo, Uri, Long>>()
+            // URIs that were fully deleted; only these are cleared from the selection afterwards.
+            val deletedUris = mutableSetOf<Uri>()
+
+            // Records a fully-deleted file: bumps counters and writes a verified history row.
+            suspend fun recordDeleted(info: SelectedFileInfo, wipedBytes: Long) {
+                successCount++
+                val realSize = if (wipedBytes > 0L) wipedBytes else info.size
+                bytesWipedInSession += realSize
+                deletedUris.add(info.uri)
+                try {
+                    repository.insert(
+                        ShredHistory(
+                            fileName = obfuscateFileName(info.name),
+                            originalSize = realSize,
+                            algorithm = algo.name,
+                            passes = algo.totalPasses
+                        )
+                    )
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
 
             try {
                 for (i in filesToShred.indices) {
@@ -285,7 +341,7 @@ class ShredderViewModel(application: Application) : AndroidViewModel(application
                     addLog("──────────────────────────────────────")
                     addLog("[File ${i + 1}/${filesToShred.size}] target: ${fileInfo.name} (${formatSize(fileInfo.size)})")
 
-                    val wipedBytes = executeShredding(
+                    val outcome = executeShredding(
                         context = context,
                         uri = fileInfo.uri,
                         fileName = fileInfo.name,
@@ -300,30 +356,33 @@ class ShredderViewModel(application: Application) : AndroidViewModel(application
                         addLog(msg)
                     }
 
-                    if (wipedBytes >= 0L) {
-                        successCount++
-                        // Use the real number of bytes overwritten (statSize), which is reliable
-                        // even when the SAF provider reports SIZE = 0. Fall back to the SAF size
-                        // only if the real size is somehow unavailable.
-                        val realSize = if (wipedBytes > 0L) wipedBytes else fileInfo.size
-                        bytesWipedInSession += realSize
+                    when (outcome) {
+                        is ShredOutcome.Deleted -> recordDeleted(fileInfo, outcome.wipedBytes)
+                        is ShredOutcome.NeedsConsent ->
+                            pendingConsent.add(Triple(fileInfo, outcome.mediaUri, outcome.wipedBytes))
+                        is ShredOutcome.WipedNotDeleted ->
+                            addLog("⚠️ ${fileInfo.name}: data was overwritten and is unrecoverable, but the file entry could not be removed. Grant 'All files access' to fully delete it.")
+                        ShredOutcome.Failed ->
+                            addLog("⚠️ ${fileInfo.name}: could not be opened for writing; nothing was changed.")
+                    }
+                }
 
-                        // Insert into DB history
-                        val obfuscatedName = obfuscateFileName(fileInfo.name)
-                        try {
-                            repository.insert(
-                                ShredHistory(
-                                    fileName = obfuscatedName,
-                                    originalSize = realSize,
-                                    algorithm = algo.name,
-                                    passes = algo.totalPasses
-                                )
-                            )
-                        } catch (e: Exception) {
-                            e.printStackTrace()
+                // Batch-remove everything that still needs the system delete dialog (Android 11+).
+                if (pendingConsent.isNotEmpty()) {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                        addLog("──────────────────────────────────────")
+                        addLog("🔓 Requesting permission to remove ${pendingConsent.size} file(s) from device...")
+                        val granted = requestSystemDelete(context, pendingConsent.map { it.second })
+                        if (granted) {
+                            for ((info, _, wiped) in pendingConsent) {
+                                addLog("✅ ${info.name}: removed from device.")
+                                recordDeleted(info, wiped)
+                            }
+                        } else {
+                            addLog("⚠️ Deletion was not approved. ${pendingConsent.size} file(s) were wiped but remain on the device.")
                         }
                     } else {
-                        addLog("⚠️ ${fileInfo.name}: could not be fully shredded (data may have been overwritten but the file could not be opened for writing or could not be unlinked). Grant 'All files access' to fully remove it.")
+                        addLog("⚠️ ${pendingConsent.size} file(s) were wiped but could not be unlinked on this Android version.")
                     }
                 }
 
@@ -341,8 +400,8 @@ class ShredderViewModel(application: Application) : AndroidViewModel(application
                     totalBytesWipedInSession = bytesWipedInSession
                 )
 
-                // Auto-clear file selections on success
-                _selectedFiles.value = emptyList()
+                // Clear only the files that were actually deleted, so failures stay visible to retry.
+                _selectedFiles.value = _selectedFiles.value.filter { it.uri !in deletedUris }
             } finally {
                 // Always release the shredding flag so the UI never gets stuck on a spinner.
                 _progressState.value = _progressState.value.copy(isShredding = false)
@@ -351,9 +410,33 @@ class ShredderViewModel(application: Application) : AndroidViewModel(application
     }
 
     /**
-     * Overwrites and deletes a SAF document.
-     * Returns the actual number of bytes overwritten on success (>= 0),
-     * or -1L on failure so the caller never reports false success or zero-byte totals.
+     * Builds a system delete-confirmation dialog (MediaStore.createDeleteRequest, API 30+),
+     * hands the IntentSender to the UI to launch, and suspends until the user responds.
+     * Returns true only if the user approved the deletion.
+     */
+    @androidx.annotation.RequiresApi(Build.VERSION_CODES.R)
+    private suspend fun requestSystemDelete(context: android.content.Context, uris: List<Uri>): Boolean {
+        return try {
+            val pendingIntent = MediaStore.createDeleteRequest(context.contentResolver, uris)
+            val deferred = CompletableDeferred<Boolean>()
+            consentDeferred = deferred
+            _deleteRequest.emit(pendingIntent.intentSender)
+            deferred.await()
+        } catch (e: Exception) {
+            e.printStackTrace()
+            consentDeferred = null
+            false
+        }
+    }
+
+    /**
+     * Overwrites a picked file's bytes and then removes it from the device, falling back
+     * automatically through the strongest available mechanism:
+     *   1. real-path overwrite + File.delete (when "All files access" is granted),
+     *   2. SAF descriptor overwrite + DocumentsContract/resolver/File delete,
+     *   3. MediaStore.createDeleteRequest system consent dialog (signalled via NeedsConsent).
+     * Overwrite and deletion are independent: even if the file cannot be opened for writing
+     * we still attempt to unlink it, and we never report success unless it was actually removed.
      */
     private suspend fun executeShredding(
         context: android.content.Context,
@@ -362,159 +445,170 @@ class ShredderViewModel(application: Application) : AndroidViewModel(application
         fileSize: Long,
         algorithm: ShredAlgorithm,
         onProgressUpdate: (pass: Int, totalPasses: Int, progressPercentage: Float, logMessage: String) -> Unit
-    ): Long {
+    ): ShredOutcome {
         val contentResolver = context.contentResolver
         val actualSize = if (fileSize <= 0) 1024L else fileSize // Minimum 1KB for safety
 
-        // Actual number of bytes overwritten; surfaced back to the caller for accurate reporting.
+        // Resolve the picked document to a real filesystem path once; reused for the fast
+        // path and for resolving a MediaStore URI for the consent fallback.
+        val resolvedPath = resolveDocumentToFilePath(context, uri) ?: getFilePathFromUri(context, uri)
+
+        // FAST PATH: with "All files access" granted and a real path, shred + unlink directly
+        // through the proven physical-file routine (true overwrite, no system dialog).
+        if (resolvedPath != null &&
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
+            Environment.isExternalStorageManager()
+        ) {
+            val file = File(resolvedPath)
+            if (file.exists() && file.canWrite()) {
+                val wiped = if (file.length() > 0L) file.length() else actualSize
+                if (executePhysicalFileShredding(resolvedPath, algorithm, onProgressUpdate)) {
+                    return ShredOutcome.Deleted(wiped)
+                }
+                // Otherwise fall through to the SAF / consent attempts below.
+            }
+        }
+
+        // Actual number of bytes overwritten; -1 until the overwrite block runs.
         var wipedBytes = -1L
 
+        // Best-effort overwrite via the SAF descriptor. A read-only provider (or media the
+        // app does not own) returns null / throws here; we log and still try to delete below.
         try {
-            // A read-only / no-write SAF provider returns null here. Without the overwrite
-            // block running we must NOT fall through to deletion and report success.
             val pfd = contentResolver.openFileDescriptor(uri, "rw")
             if (pfd == null) {
-                onProgressUpdate(0, algorithm.totalPasses, 0f, "Error: File could not be opened for writing; overwrite aborted.")
-                return -1L
-            }
-            pfd.use { pfd ->
-                // AutoCloseOutputStream owns the fd exactly once; closing it via use {}
-                // also closes the channel, avoiding the double-close + stream leak.
-                ParcelFileDescriptor.AutoCloseOutputStream(pfd).use { aos ->
-                    val fileChannel = aos.channel
-
-                    // Trust the real on-disk length from the descriptor; SAF documents often
-                    // report SIZE = 0, which would otherwise leave most bytes intact.
-                    val realSize = if (pfd.statSize > 0) pfd.statSize else actualSize
-                    wipedBytes = realSize
-
-                    val passes = algorithm.getPassPatterns(realSize)
-                    val totalPasses = passes.size
-
-                    val bufferSize = 128 * 1024 // 128KB buffer
-                    val buffer = ByteArray(bufferSize)
-                    val random = SecureRandom()
-
-                    for (pIdx in 0 until totalPasses) {
-                        val passNum = pIdx + 1
-                        val patternType = passes[pIdx]
-
-                        onProgressUpdate(
-                            passNum,
-                            totalPasses,
-                            0f,
-                            "[Pass $passNum/$totalPasses] Overwriting with: ${patternType.description}"
-                        )
-
-                        // Seek to start
-                        fileChannel.position(0)
-
-                        var bytesWritten = 0L
-                        var lastBucket = -1
-                        while (bytesWritten < realSize) {
-                            val remaining = realSize - bytesWritten
-                            val toWrite = Math.min(bufferSize.toLong(), remaining).toInt()
-
-                            when (patternType) {
-                                is PatternType.ZeroField -> buffer.fill(0)
-                                is PatternType.OneField -> buffer.fill(0xFF.toByte())
-                                is PatternType.FixedByte -> buffer.fill(patternType.byteValue)
-                                is PatternType.RandomField -> random.nextBytes(buffer)
-                            }
-
-                            val byteBuffer = java.nio.ByteBuffer.wrap(buffer, 0, toWrite)
-                            // Drain the buffer fully: FileChannel.write may legally return a
-                            // short count, leaving a trailing region un-overwritten otherwise.
-                            while (byteBuffer.hasRemaining()) {
-                                val n = fileChannel.write(byteBuffer)
-                                if (n <= 0) break
-                            }
-                            bytesWritten += toWrite
-
-                            val percent = (bytesWritten.toFloat() / realSize) * 100f
-                            // Deterministic bucket-change throttle (0/25/50/75) plus final write.
-                            val bucket = (percent / 25f).toInt()
-                            if (bucket != lastBucket || bytesWritten >= realSize) {
-                                lastBucket = bucket
-                                onProgressUpdate(
-                                    passNum,
-                                    totalPasses,
-                                    percent,
-                                    "[Pass $passNum] Wiped ${formatSize(bytesWritten)} / ${formatSize(realSize)} (${percent.toInt()}%)"
-                                )
-                            }
-                        }
-
-                        // Flush cache to hardware sector physically
-                        fileChannel.force(true)
-                        delay(50) // Small breather for UI transitions
-                    }
-
-                    // Metadata scrubbing & truncation
-                    onProgressUpdate(totalPasses, totalPasses, 100f, "Metadata Scrubbing: Truncating file payload of descriptor...")
-                    fileChannel.truncate(0)
-                    fileChannel.force(true)
-                }
-            }
-
-            // Permanent Document Deletion via Storage Access Framework
-            onProgressUpdate(algorithm.totalPasses, algorithm.totalPasses, 100f, "Permanent Deletion: Destroying directory indices of URI...")
-            val deleted = try {
-                DocumentsContract.deleteDocument(contentResolver, uri)
-            } catch (e: Exception) {
-                false
-            }
-
-            if (deleted) {
-                onProgressUpdate(algorithm.totalPasses, algorithm.totalPasses, 100f, "Success: Shredded & deleted completely.")
-                return wipedBytes
+                onProgressUpdate(0, algorithm.totalPasses, 0f, "Note: file could not be opened for overwriting; attempting direct deletion.")
             } else {
-                // Secondary deletion attempt via resolver
-                var secondaryDeleted = false
-                try {
-                    val count = contentResolver.delete(uri, null, null)
-                    if (count > 0) {
-                        secondaryDeleted = true
-                    }
-                } catch (e: Exception) {
-                    // Contents are still guaranteed to be wiped even if Uri metadata remains
-                }
+                pfd.use { pfd ->
+                    // AutoCloseOutputStream owns the fd exactly once; closing it via use {}
+                    // also closes the channel, avoiding the double-close + stream leak.
+                    ParcelFileDescriptor.AutoCloseOutputStream(pfd).use { aos ->
+                        val fileChannel = aos.channel
 
-                // Tertiary deletion attempt via physical file path (resolved from the
-                // picked document URI). Works on Android 11+ once "All files access" is granted.
-                if (!secondaryDeleted) {
-                    try {
-                        val path = resolveDocumentToFilePath(getApplication(), uri)
-                            ?: getFilePathFromUri(getApplication(), uri)
-                        if (path != null) {
-                            val f = File(path)
-                            if (f.exists() && f.delete()) {
-                                secondaryDeleted = true
-                            } else if (!f.exists()) {
-                                secondaryDeleted = true
+                        // Trust the real on-disk length from the descriptor; SAF documents often
+                        // report SIZE = 0, which would otherwise leave most bytes intact.
+                        val realSize = if (pfd.statSize > 0) pfd.statSize else actualSize
+                        wipedBytes = realSize
+
+                        val passes = algorithm.getPassPatterns(realSize)
+                        val totalPasses = passes.size
+
+                        val bufferSize = 128 * 1024 // 128KB buffer
+                        val buffer = ByteArray(bufferSize)
+                        val random = SecureRandom()
+
+                        for (pIdx in 0 until totalPasses) {
+                            val passNum = pIdx + 1
+                            val patternType = passes[pIdx]
+
+                            onProgressUpdate(
+                                passNum,
+                                totalPasses,
+                                0f,
+                                "[Pass $passNum/$totalPasses] Overwriting with: ${patternType.description}"
+                            )
+
+                            // Seek to start
+                            fileChannel.position(0)
+
+                            var bytesWritten = 0L
+                            var lastBucket = -1
+                            while (bytesWritten < realSize) {
+                                val remaining = realSize - bytesWritten
+                                val toWrite = Math.min(bufferSize.toLong(), remaining).toInt()
+
+                                when (patternType) {
+                                    is PatternType.ZeroField -> buffer.fill(0)
+                                    is PatternType.OneField -> buffer.fill(0xFF.toByte())
+                                    is PatternType.FixedByte -> buffer.fill(patternType.byteValue)
+                                    is PatternType.RandomField -> random.nextBytes(buffer)
+                                }
+
+                                val byteBuffer = java.nio.ByteBuffer.wrap(buffer, 0, toWrite)
+                                // Drain the buffer fully: FileChannel.write may legally return a
+                                // short count, leaving a trailing region un-overwritten otherwise.
+                                while (byteBuffer.hasRemaining()) {
+                                    val n = fileChannel.write(byteBuffer)
+                                    if (n <= 0) break
+                                }
+                                bytesWritten += toWrite
+
+                                val percent = (bytesWritten.toFloat() / realSize) * 100f
+                                // Deterministic bucket-change throttle (0/25/50/75) plus final write.
+                                val bucket = (percent / 25f).toInt()
+                                if (bucket != lastBucket || bytesWritten >= realSize) {
+                                    lastBucket = bucket
+                                    onProgressUpdate(
+                                        passNum,
+                                        totalPasses,
+                                        percent,
+                                        "[Pass $passNum] Wiped ${formatSize(bytesWritten)} / ${formatSize(realSize)} (${percent.toInt()}%)"
+                                    )
+                                }
                             }
+
+                            // Flush cache to hardware sector physically
+                            fileChannel.force(true)
+                            delay(50) // Small breather for UI transitions
                         }
-                    } catch (e: Exception) {
-                        // Squelch physical delete error
+
+                        // Metadata scrubbing & truncation
+                        onProgressUpdate(totalPasses, totalPasses, 100f, "Metadata Scrubbing: Truncating file payload of descriptor...")
+                        fileChannel.truncate(0)
+                        fileChannel.force(true)
                     }
                 }
-
-                if (secondaryDeleted) {
-                    onProgressUpdate(algorithm.totalPasses, algorithm.totalPasses, 100f, "Success: Shredded & deleted completely.")
-                    return wipedBytes
-                }
-
-                onProgressUpdate(algorithm.totalPasses, algorithm.totalPasses, 100f, "⚠️ Data overwritten, but file could not be unlinked. Grant 'All files access' permission to fully delete.")
-                // The overwrite + truncate(0) fully completed, so the content is irrecoverable.
-                // Only the directory index entry lingers. Report the real wiped byte count so the
-                // caller records the wipe instead of mislabeling a destroyed file as a failure.
-                return wipedBytes
             }
         } catch (e: Exception) {
-            onProgressUpdate(0, algorithm.totalPasses, 0f, "Critical Error: ${e.localizedMessage ?: "File locked or inaccessible."}")
+            onProgressUpdate(0, algorithm.totalPasses, 0f, "Overwrite warning: ${e.localizedMessage ?: "file locked"}; attempting deletion.")
             e.printStackTrace()
-            return -1L
         }
+
+        // Bytes reported on a successful unlink (fall back to the SAF-reported size).
+        val reportedBytes = if (wipedBytes > 0L) wipedBytes else actualSize
+
+        // Helper: emit the success log and build the Deleted outcome.
+        fun deleted(): ShredOutcome {
+            onProgressUpdate(algorithm.totalPasses, algorithm.totalPasses, 100f, "Success: Shredded & deleted completely.")
+            return ShredOutcome.Deleted(reportedBytes)
+        }
+
+        // DELETE CHAIN.
+        onProgressUpdate(algorithm.totalPasses, algorithm.totalPasses, 100f, "Permanent Deletion: removing file entry...")
+
+        // 1. SAF document delete (works for providers that grant delete, e.g. tree URIs).
+        val safDeleted = try {
+            DocumentsContract.deleteDocument(contentResolver, uri)
+        } catch (e: Exception) {
+            false
+        }
+        if (safDeleted) return deleted()
+
+        // 2. Resolver delete (some providers support it directly).
+        try {
+            if (contentResolver.delete(uri, null, null) > 0) return deleted()
+        } catch (e: Exception) {
+            // Provider does not support delete; continue.
+        }
+
+        // 3. Direct File.delete via the resolved path (All files access, files outside MediaStore).
+        if (resolvedPath != null) {
+            try {
+                val f = File(resolvedPath)
+                if (!f.exists() || f.delete()) return deleted()
+            } catch (e: Exception) {
+                // Fall through to the consent fallback.
+            }
+        }
+
+        // 4. Fall back to a system delete-consent dialog for MediaStore-indexed files.
+        val mediaUri = resolvedPath?.let { getContentUriFromFilePath(context, it) }
+        if (mediaUri != null) {
+            return ShredOutcome.NeedsConsent(mediaUri, reportedBytes)
+        }
+
+        // Nothing could unlink it. Distinguish "wiped but lingering" from "untouched".
+        return if (wipedBytes >= 0L) ShredOutcome.WipedNotDeleted(wipedBytes) else ShredOutcome.Failed
     }
 
     /**

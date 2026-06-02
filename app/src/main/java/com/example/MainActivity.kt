@@ -1,6 +1,7 @@
 package com.example
 
 import android.Manifest
+import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -14,6 +15,7 @@ import androidx.core.content.ContextCompat
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
@@ -233,6 +235,20 @@ fun ShredderAppScreen(
         if (!uris.isNullOrEmpty()) {
             viewModel.addFiles(uris)
             Toast.makeText(context, "${uris.size} sensitive file(s) loaded", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    // Launches the system delete-confirmation dialog requested by MediaStore.createDeleteRequest
+    // when a wiped file cannot be unlinked directly, then reports the user's choice back.
+    val deleteConsentLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartIntentSenderForResult()
+    ) { result ->
+        viewModel.onDeleteConsentResult(result.resultCode == Activity.RESULT_OK)
+    }
+
+    LaunchedEffect(Unit) {
+        viewModel.deleteRequest.collect { intentSender ->
+            deleteConsentLauncher.launch(IntentSenderRequest.Builder(intentSender).build())
         }
     }
 
