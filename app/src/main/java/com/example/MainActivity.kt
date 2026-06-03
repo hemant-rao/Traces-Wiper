@@ -77,6 +77,7 @@ import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.ViewAgenda
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.material3.AlertDialog
@@ -140,6 +141,7 @@ import com.example.ui.theme.SlateBorder
 import com.example.ui.theme.TerminalCyan
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
+import com.example.recover.*
 import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
@@ -242,7 +244,8 @@ fun ShredderAppScreen(
         CyberTabItem("Files", Icons.Default.Delete, "Secure file wiping"),
         CyberTabItem("Text", Icons.Default.Lock, "Clean text scrubbing"),
         CyberTabItem("Deep Wipe", Icons.Default.Refresh, "Sanitize storage blocks"),
-        CyberTabItem("History", Icons.Default.History, "Local session database")
+        CyberTabItem("History", Icons.Default.History, "Local session database"),
+        CyberTabItem("Recoverable", Icons.Default.Search, "Find recoverable traces")
     )
 
     val selectedFiles by viewModel.selectedFiles.collectAsStateWithLifecycle()
@@ -454,6 +457,10 @@ fun ShredderAppScreen(
                     onClearAll = { viewModel.clearHistory() },
                     viewModel = viewModel
                 )
+                4 -> {
+                    val recoverableViewModel: com.example.recover.RecoverableTracesViewModel = viewModel()
+                    com.example.recover.RecoverableTracesScreen(recoverableViewModel)
+                }
             }
         }
     }
@@ -751,81 +758,38 @@ fun CompactDashboardHeader(
         border = BorderStroke(1.dp, SlateBorder),
         shape = RoundedCornerShape(8.dp)
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            // Stats Row
+        Box(modifier = Modifier.fillMaxWidth()) {
+            // Background Free Space Bar
+            val freePercentage = 1f - usedPercentage
+            Box(modifier = Modifier.fillMaxWidth().height(4.dp).align(Alignment.BottomCenter).background(Color(0xFF1E293B)))
+            Box(modifier = Modifier.fillMaxWidth(freePercentage.coerceIn(0f, 1f)).height(4.dp).align(Alignment.BottomCenter).background(NeonGreen))
+
+            // Content
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                DashboardStat(
-                    label = "SHREDDED",
-                    value = "$historyCount",
-                    accentColor = TerminalCyan,
-                    modifier = Modifier.weight(1f)
-                )
-                Box(
-                    modifier = Modifier
-                        .width(1.dp)
-                        .height(18.dp)
-                        .background(SlateBorder)
-                )
-                DashboardStat(
-                    label = "TOTAL WIPED",
-                    value = formatBytesStatic(totalBytesShredded),
-                    accentColor = ElectricAmber,
-                    modifier = Modifier.weight(1.2f)
-                )
-                Box(
-                    modifier = Modifier
-                        .width(1.dp)
-                        .height(18.dp)
-                        .background(SlateBorder)
-                )
-                DashboardStat(
-                    label = "SECURITY",
-                    value = securityScore,
-                    accentColor = NeonGreen,
-                    modifier = Modifier.weight(1f)
-                )
-            }
-
-            // Storage Bar
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
                 Text(
-                    text = "STORAGE",
-                    color = TextSecondary,
-                    fontSize = 9.sp,
+                    text = "Shredded $historyCount",
+                    color = TextPrimary,
+                    fontSize = 11.sp,
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.Bold
                 )
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(6.dp)
-                        .background(Color(0xFF1E293B), RoundedCornerShape(3.dp))
-                        .clip(RoundedCornerShape(3.dp))
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth(usedPercentage)
-                            .fillMaxHeight()
-                            .background(NeonGreen)
-                    )
-                }
                 Text(
-                    text = "${(usedPercentage * 100).toInt()}% USED",
-                    color = TextSecondary,
-                    fontSize = 9.sp,
+                    text = "Total Wiped ${formatBytesStatic(totalBytesShredded)}",
+                    color = TextPrimary,
+                    fontSize = 11.sp,
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = "Security $securityScore",
+                    color = TextPrimary,
+                    fontSize = 11.sp,
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.Bold
                 )
