@@ -78,6 +78,7 @@ import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.ViewAgenda
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.material3.AlertDialog
@@ -239,13 +240,11 @@ fun ShredderAppScreen(
     val context = LocalContext.current
     var selectedTab by remember { mutableStateOf(0) }
     
-    // Exactly 4 structured tabs with high visual scanability icons
+    // Three top-level tabs; related tools are grouped into inner sub-tabs within each.
     val tabs = listOf(
-        CyberTabItem("Files", Icons.Default.Delete, "Secure file wiping"),
-        CyberTabItem("Text", Icons.Default.Lock, "Clean text scrubbing"),
-        CyberTabItem("Deep Wipe", Icons.Default.Refresh, "Sanitize storage blocks"),
-        CyberTabItem("History", Icons.Default.History, "Local session database"),
-        CyberTabItem("Recoverable", Icons.Default.Search, "Find recoverable traces")
+        CyberTabItem("Shred", Icons.Default.Delete, "Securely destroy data"),
+        CyberTabItem("Recover", Icons.Default.Restore, "Find & restore deleted data"),
+        CyberTabItem("History", Icons.Default.History, "Logs & security standards")
     )
 
     val selectedFiles by viewModel.selectedFiles.collectAsStateWithLifecycle()
@@ -438,7 +437,7 @@ fun ShredderAppScreen(
                 .fillMaxWidth()
         ) {
             when (selectedTab) {
-                0 -> FileShredderTab(
+                0 -> ShredHubTab(
                     selectedFiles = selectedFiles,
                     currentAlgo = currentAlgo,
                     progressState = progressState,
@@ -450,23 +449,18 @@ fun ShredderAppScreen(
                     isStorageGranted = isStorageGranted,
                     onRequestStoragePermission = onRequestStoragePermission
                 )
-                1 -> TextWiperTab(viewModel = viewModel)
-                2 -> DeepWipeTab(viewModel = viewModel)
-                3 -> HistoryAndGuideTab(
+                1 -> RecoverHubTab()
+                2 -> HistoryAndGuideTab(
                     historyLog = historyLog,
                     onClearAll = { viewModel.clearHistory() },
                     viewModel = viewModel
                 )
-                4 -> {
-                    val recoverableViewModel: com.example.recover.RecoverableTracesViewModel = viewModel()
-                    com.example.recover.RecoverableTracesScreen(recoverableViewModel)
-                }
             }
         }
     }
 
     // Full-Page Overlay Cyber-Security Process Loader Overlay
-    if (isScanning || isDeepWiping || (progressState.isShredding && selectedTab == 2)) {
+    if (isScanning || isDeepWiping) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -660,6 +654,144 @@ data class CyberTabItem(
     val description: String
 )
 
+/**
+ * Reusable capsule segmented control used for the inner sub-tabs that group related
+ * tools under a single top-level tab (Shred, Recover, History).
+ */
+@Composable
+fun InnerTabBar(
+    titles: List<String>,
+    selected: Int,
+    onSelect: (Int) -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(CharcoalSurface, RoundedCornerShape(12.dp))
+            .border(1.dp, SlateBorder, RoundedCornerShape(12.dp))
+            .padding(4.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        titles.forEachIndexed { index, title ->
+            val isSelected = selected == index
+            val tabBackground = if (isSelected) NeonGreen.copy(alpha = 0.12f) else Color.Transparent
+            val tabTextColor = if (isSelected) NeonGreen else TextSecondary
+
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(tabBackground)
+                    .clickable { onSelect(index) }
+                    .padding(vertical = 10.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = title,
+                    color = tabTextColor,
+                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                    fontSize = 11.sp,
+                    fontFamily = FontFamily.SansSerif
+                )
+            }
+        }
+    }
+}
+
+/**
+ * "Shred" top-level tab. Groups the three destroy-data tools — secure file wiping,
+ * text scrubbing and deep free-space wiping — into inner sub-tabs.
+ */
+@Composable
+fun ShredHubTab(
+    selectedFiles: List<SelectedFileInfo>,
+    currentAlgo: ShredAlgorithm,
+    progressState: ShredProgressState,
+    onPickFiles: () -> Unit,
+    onRemoveFile: (SelectedFileInfo) -> Unit,
+    onAlgoSelected: (ShredAlgorithm) -> Unit,
+    onStartShred: () -> Unit,
+    viewModel: ShredderViewModel,
+    isStorageGranted: Boolean = true,
+    onRequestStoragePermission: () -> Unit = {}
+) {
+    var innerTab by remember { mutableStateOf(0) }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        InnerTabBar(
+            titles = listOf("Files", "Text", "Deep Wipe"),
+            selected = innerTab,
+            onSelect = { innerTab = it }
+        )
+
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+        ) {
+            when (innerTab) {
+                0 -> FileShredderTab(
+                    selectedFiles = selectedFiles,
+                    currentAlgo = currentAlgo,
+                    progressState = progressState,
+                    onPickFiles = onPickFiles,
+                    onRemoveFile = onRemoveFile,
+                    onAlgoSelected = onAlgoSelected,
+                    onStartShred = onStartShred,
+                    viewModel = viewModel,
+                    isStorageGranted = isStorageGranted,
+                    onRequestStoragePermission = onRequestStoragePermission
+                )
+                1 -> TextWiperTab(viewModel = viewModel)
+                2 -> DeepWipeTab(viewModel = viewModel)
+            }
+        }
+    }
+}
+
+/**
+ * "Recover" top-level tab. Groups trace discovery and data restoration into inner sub-tabs.
+ */
+@Composable
+fun RecoverHubTab() {
+    var innerTab by remember { mutableStateOf(0) }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        InnerTabBar(
+            titles = listOf("Find Traces", "Restore"),
+            selected = innerTab,
+            onSelect = { innerTab = it }
+        )
+
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+        ) {
+            when (innerTab) {
+                0 -> {
+                    val recoverableViewModel: com.example.recover.RecoverableTracesViewModel = viewModel()
+                    com.example.recover.RecoverableTracesScreen(recoverableViewModel)
+                }
+                1 -> {
+                    val dataRecoveryViewModel: com.example.recover.DataRecoveryViewModel = viewModel()
+                    com.example.recover.DataRecoveryScreen(dataRecoveryViewModel)
+                }
+            }
+        }
+    }
+}
+
 @Composable
 fun HistoryAndGuideTab(
     historyLog: List<com.example.data.ShredHistory>,
@@ -674,39 +806,11 @@ fun HistoryAndGuideTab(
             .padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        // State-of-the-art capsule segmented navigation control bar (Dynamic Modern SaaS styling)
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(CharcoalSurface, RoundedCornerShape(12.dp))
-                .border(1.dp, SlateBorder, RoundedCornerShape(12.dp))
-                .padding(4.dp),
-            horizontalArrangement = Arrangement.spacedBy(4.dp)
-        ) {
-            listOf("Shred Records", "Security Standards").forEachIndexed { index, title ->
-                val isSelected = insideTabSelection == index
-                val tabBackground = if (isSelected) NeonGreen.copy(alpha = 0.12f) else Color.Transparent
-                val tabTextColor = if (isSelected) NeonGreen else TextSecondary
-
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(tabBackground)
-                        .clickable { insideTabSelection = index }
-                        .padding(vertical = 10.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = title,
-                        color = tabTextColor,
-                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                        fontSize = 11.sp,
-                        fontFamily = FontFamily.SansSerif
-                    )
-                }
-            }
-        }
+        InnerTabBar(
+            titles = listOf("Shred Records", "Security Standards"),
+            selected = insideTabSelection,
+            onSelect = { insideTabSelection = it }
+        )
 
         Box(
             modifier = Modifier
@@ -857,7 +961,7 @@ fun FileShredderTab(
     if (showConfirmShredDialog) {
         CyberConfirmDialog(
             title = "EXECUTE SECURE SHREDDING",
-            message = "You are about to permanently delete ${selectedFiles.size} selected file(s). This operation will overwrite your files ${currentAlgo.totalPasses} times, making them impossible to recover.\n\nAre you sure you want to proceed?",
+            message = "You are about to permanently delete ${selectedFiles.size} selected file(s). This overwrites your files ${currentAlgo.totalPasses} times before deleting them, so normal recovery tools can't bring them back. This cannot be undone.\n\nAre you sure you want to proceed?",
             confirmText = "CONFIRM AND SHRED",
             cancelText = "ABORT PROTOCOL",
             onConfirm = {
@@ -997,7 +1101,7 @@ fun FileShredderTab(
                         )
                         Spacer(modifier = Modifier.width(10.dp))
                         Text(
-                            text = "WARNING: Secure Shredding overwrites file data with multiple random passes before deletion. Deleted materials are PERMANENTLY UNRECOVERABLE by any hardware or software methods. Use with absolute caution.",
+                            text = "WARNING: Secure Shredding overwrites the file's data with multiple random passes and then deletes it, so it can't be brought back by normal recovery tools. This cannot be undone — use with absolute caution.",
                             color = LaserRed,
                             fontSize = 11.sp,
                             lineHeight = 15.sp,
@@ -1245,7 +1349,7 @@ fun FileShredderTab(
 
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            "We use the most powerful Permanent Delete standard to completely overwrite your files 35 times. Once deleted, they are gone forever and cannot be recovered by anyone.",
+                            "We overwrite your files 35 times before deleting them, so normal recovery apps can't bring the data back. On phone flash storage no app can promise 100% erasure — for an absolute guarantee, also use Deep Wipe or a factory reset.",
                             color = TextSecondary,
                             fontSize = 12.sp,
                             lineHeight = 16.sp,
@@ -1426,7 +1530,7 @@ fun TextWiperTab(viewModel: ShredderViewModel) {
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    "Any text you copy, paste, or type on your phone can stay hidden in your device's memory for a long time. Use this tool to permanently delete sensitive text so no one can ever find it.\n\nExamples of what to delete here:\n• Passwords or secret PIN codes\n• Bank account numbers or card details\n• Private notes or messages you want to destroy completely",
+                    "Sensitive text you copy often stays on your phone's clipboard until something else replaces it. Paste it here and this tool removes it from the app and clears your clipboard, so it isn't left waiting for the next app to read.\n\nGood things to clear here:\n• Passwords or secret PIN codes\n• Bank account numbers or card details\n• One-time codes (OTP) and private snippets you just copied",
                     color = TextSecondary,
                     fontSize = 12.sp,
                     lineHeight = 16.sp
@@ -1453,7 +1557,7 @@ fun TextWiperTab(viewModel: ShredderViewModel) {
             ),
             placeholder = {
                 Text(
-                    "Paste your sensitive text here (e.g. passwords, bank details, private messages) to delete it forever...",
+                    "Paste sensitive text you just copied (e.g. passwords, bank details, OTP codes) to clear it from the app and your clipboard...",
                     color = TextSecondary,
                     fontSize = 12.sp
                 )
@@ -1880,9 +1984,9 @@ fun ScannedFileGridCard(
 @Composable
 fun AlgorithmsTab() {
     val itemsGuide = listOf(
-        GuideItem("How does it work?", "When you delete a file normally, it's just hidden and can still be recovered. Our advanced algorithm completely deletes the data and makes it unrecoverable, so files can never be recovered again."),
-        GuideItem("Is it completely safe?", "Yes! Your files will be securely deleted and permanently removed from your phone. Once deleted, they are gone forever."),
-        GuideItem("Who can recover my files after this?", "No one. Not even advanced recovery software or professionals can bring back data after our Permanent Delete process is finished.")
+        GuideItem("How does it work?", "When you delete a file normally, only its entry is removed and the data stays on disk until something overwrites it — that's why recovery apps can bring it back. We overwrite the file's data with 35 passes first, then delete it, so normal recovery tools find only noise."),
+        GuideItem("Is it safe?", "Yes — the file is securely overwritten and removed from your phone. It cannot be undone, so double-check before you shred."),
+        GuideItem("Can my files still be recovered?", "Not by ordinary recovery apps or services. Be aware that phone flash storage spreads writes across cells (wear-leveling), so no app can mathematically guarantee 100% erasure. For an absolute guarantee, also run Deep Wipe (free-space overwrite) or do a factory reset, which erases the encryption key.")
     )
 
     LazyColumn(

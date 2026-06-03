@@ -13,16 +13,14 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.lazy.grid.GridItemSpan
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.List
+import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -40,7 +38,7 @@ import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun RecoverableTracesScreen(vm: RecoverableTracesViewModel) {
+fun DataRecoveryScreen(vm: DataRecoveryViewModel) {
     val ui by vm.ui.collectAsStateWithLifecycle()
     val consent by vm.consentRequest.collectAsStateWithLifecycle()
     val context = LocalContext.current
@@ -48,13 +46,11 @@ fun RecoverableTracesScreen(vm: RecoverableTracesViewModel) {
     var showConfirm by remember { mutableStateOf(false) }
 
     // launcher for media read permissions — scan once the permission dialog resolves
-    // (fires whether the user just granted, denied, or had already granted) so the first
-    // tap isn't a no-op racing an ungranted permission.
     val permLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { vm.scan() }
 
-    // launcher for the system delete-consent dialog (other apps' media)
+    // launcher for the system untrash-consent dialog (other apps' trashed media)
     val consentLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartIntentSenderForResult()
     ) { result -> vm.onConsentHandled(result.resultCode == Activity.RESULT_OK) }
@@ -74,7 +70,7 @@ fun RecoverableTracesScreen(vm: RecoverableTracesViewModel) {
             c.get(Calendar.YEAR), c.get(Calendar.MONTH), c.get(Calendar.DAY_OF_MONTH)
         ).show()
     }
-    
+
     var isGrid by remember { mutableStateOf(true) }
 
     LazyVerticalGrid(
@@ -86,27 +82,25 @@ fun RecoverableTracesScreen(vm: RecoverableTracesViewModel) {
     ) {
         item(span = { GridItemSpan(maxLineSpan) }) {
             Column {
-                Text("Deleted Data Remnants", style = MaterialTheme.typography.headlineSmall)
+                Text("Recover Deleted Data", style = MaterialTheme.typography.headlineSmall)
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    "Detecting traces of previously deleted files (trash & recycle bins, thumbnail/" +
-                        "preview caches, app media leftovers, interrupted downloads, temp/backup copies " +
-                        "and LOST.DIR fragments) that still physically exist on your storage — the same " +
-                        "things a recovery tool would resurrect. Select items to permanently wipe them.",
+                    "Finds previously deleted files that still physically exist on your storage " +
+                        "(trash & recycle bins, orphaned thumbnail/preview caches, app media leftovers, " +
+                        "interrupted downloads, temp/backup copies and LOST.DIR fragments) and restores " +
+                        "them. Readable items are copied into Download/${TraceRecoverer.RECOVERY_FOLDER}; " +
+                        "trashed gallery items are restored in place after a one-tap system confirmation.",
                     style = MaterialTheme.typography.bodySmall
                 )
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    "For Recently-deleted (Trash) items the range filters by the estimated deletion " +
-                        "date (≈ auto-purge time minus the ~30-day trash window). For other leftovers, " +
-                        "where no deletion time exists, the file's own date is used instead.\n" +
-                        "This scan locates evidence of deleted content; it does not carve raw deleted " +
-                        "data from raw storage, which requires root.",
+                    "This recovers data that is still on disk. It cannot carve raw bytes from already-" +
+                        "overwritten storage — that requires a rooted device or a PC forensic tool. " +
+                        "Run the scan as soon as possible after a deletion for the best results.",
                     style = MaterialTheme.typography.labelSmall
                 )
                 Spacer(Modifier.height(12.dp))
 
-                // Date range row (label = File date)
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     OutlinedButton(onClick = { pickDate(ui.fromMillis) { vm.setRange(it, ui.toMillis) } }) {
                         Text("From: ${df.format(Date(ui.fromMillis))}")
@@ -132,9 +126,7 @@ fun RecoverableTracesScreen(vm: RecoverableTracesViewModel) {
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Button(onClick = {
-                        permLauncher.launch(neededReadPermissions())
-                    }) { Text("Scan") }
+                    Button(onClick = { permLauncher.launch(neededReadPermissionsForRecovery()) }) { Text("Scan") }
                     if (ui.includeFilesystem && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
                         !Environment.isExternalStorageManager()
                     ) {
@@ -172,26 +164,18 @@ fun RecoverableTracesScreen(vm: RecoverableTracesViewModel) {
         }
         items(ui.traces, key = { it.id }, span = { if (isGrid) GridItemSpan(1) else GridItemSpan(maxLineSpan) }) { trace ->
             if (isGrid) {
-                TraceCell(
-                    trace = trace,
-                    selected = trace.id in ui.selected,
-                    onClick = { vm.toggle(trace.id) }
-                )
+                RecoverCell(trace = trace, selected = trace.id in ui.selected, onClick = { vm.toggle(trace.id) })
             } else {
-                TraceListItem(
-                    trace = trace,
-                    selected = trace.id in ui.selected,
-                    onClick = { vm.toggle(trace.id) }
-                )
+                RecoverListItem(trace = trace, selected = trace.id in ui.selected, onClick = { vm.toggle(trace.id) })
             }
         }
         if (ui.traces.isNotEmpty()) {
             item(span = { GridItemSpan(maxLineSpan) }) {
                 Button(
                     onClick = { showConfirm = true },
-                    enabled = ui.selectedCount > 0 && !ui.wiping,
+                    enabled = ui.selectedCount > 0 && !ui.recovering,
                     modifier = Modifier.fillMaxWidth().padding(top = 16.dp, bottom = 16.dp)
-                ) { Text(if (ui.wiping) "Wiping…" else "Wipe selected (${ui.selectedCount})") }
+                ) { Text(if (ui.recovering) "Recovering…" else "Recover selected (${ui.selectedCount})") }
             }
         }
     }
@@ -199,10 +183,15 @@ fun RecoverableTracesScreen(vm: RecoverableTracesViewModel) {
     if (showConfirm) {
         AlertDialog(
             onDismissRequest = { showConfirm = false },
-            title = { Text("Permanently wipe ${ui.selectedCount} item(s)?") },
-            text = { Text("This overwrites and deletes the selected files. It cannot be undone.") },
+            title = { Text("Recover ${ui.selectedCount} item(s)?") },
+            text = {
+                Text(
+                    "Readable files are copied into Download/${TraceRecoverer.RECOVERY_FOLDER}. " +
+                        "For trashed gallery items you'll get a system prompt to restore them in place."
+                )
+            },
             confirmButton = {
-                TextButton(onClick = { showConfirm = false; vm.wipeSelected() }) { Text("Wipe") }
+                TextButton(onClick = { showConfirm = false; vm.recoverSelected() }) { Text("Recover") }
             },
             dismissButton = { TextButton(onClick = { showConfirm = false }) { Text("Cancel") } }
         )
@@ -210,7 +199,7 @@ fun RecoverableTracesScreen(vm: RecoverableTracesViewModel) {
 }
 
 @Composable
-private fun TraceListItem(trace: RecoverableTrace, selected: Boolean, onClick: () -> Unit) {
+private fun RecoverListItem(trace: RecoverableTrace, selected: Boolean, onClick: () -> Unit) {
     Card(
         modifier = Modifier.fillMaxWidth().clickable { onClick() },
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
@@ -230,18 +219,11 @@ private fun TraceListItem(trace: RecoverableTrace, selected: Boolean, onClick: (
                             Text(if (trace.category == TraceCategory.DOCUMENT) "DOC" else "FILE", style = MaterialTheme.typography.labelSmall)
                         }
                 }
-                if (trace.orphan) {
-                    Text(
-                        "deleted",
-                        style = MaterialTheme.typography.labelSmall,
-                        modifier = Modifier.align(Alignment.BottomStart)
-                    )
-                }
             }
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text(trace.displayName, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(trace.dateLabel(), style = MaterialTheme.typography.labelSmall)
+                Text(trace.recoverDateLabel(), style = MaterialTheme.typography.labelSmall)
                 Text(trace.source, style = MaterialTheme.typography.labelSmall)
             }
             Checkbox(checked = selected, onCheckedChange = { onClick() })
@@ -250,7 +232,7 @@ private fun TraceListItem(trace: RecoverableTrace, selected: Boolean, onClick: (
 }
 
 @Composable
-private fun TraceCell(trace: RecoverableTrace, selected: Boolean, onClick: () -> Unit) {
+private fun RecoverCell(trace: RecoverableTrace, selected: Boolean, onClick: () -> Unit) {
     Column(
         Modifier.clip(RoundedCornerShape(10.dp)).clickable { onClick() }.padding(2.dp)
     ) {
@@ -266,10 +248,7 @@ private fun TraceCell(trace: RecoverableTrace, selected: Boolean, onClick: () ->
                 else ->
                     Box(Modifier.matchParentSize(), contentAlignment = Alignment.Center) {
                         Text(
-                            when (trace.category) {
-                                TraceCategory.DOCUMENT -> "DOC"
-                                else -> "FILE"
-                            },
+                            if (trace.category == TraceCategory.DOCUMENT) "DOC" else "FILE",
                             style = MaterialTheme.typography.titleMedium
                         )
                     }
@@ -288,24 +267,18 @@ private fun TraceCell(trace: RecoverableTrace, selected: Boolean, onClick: () ->
             style = MaterialTheme.typography.labelSmall,
             maxLines = 1, overflow = TextOverflow.Ellipsis
         )
-        Text(trace.dateLabel(), style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(trace.recoverDateLabel(), style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
-private val itemDateFormat = SimpleDateFormat("dd MMM yyyy", Locale.getDefault())
+private val recoverDateFormat = SimpleDateFormat("dd MMM yyyy", Locale.getDefault())
 
-/**
- * One-line date label per item: estimated deletion date for trash remnants (with the exact
- * auto-purge date), otherwise the file's own date so we never imply a deletion time we don't know.
- */
-private fun RecoverableTrace.dateLabel(): String =
-    deletedAtMillis?.let { del ->
-        val expiry = expiresMillis?.let { " · purges ${itemDateFormat.format(Date(it))}" } ?: ""
-        "Deleted ~${itemDateFormat.format(Date(del))}$expiry"
-    } ?: "File date ${itemDateFormat.format(Date(dateMillis))}"
+private fun RecoverableTrace.recoverDateLabel(): String =
+    deletedAtMillis?.let { del -> "Deleted ~${recoverDateFormat.format(Date(del))}" }
+        ?: "File date ${recoverDateFormat.format(Date(dateMillis))}"
 
 /** Read permissions appropriate to the OS version. */
-private fun neededReadPermissions(): Array<String> =
+private fun neededReadPermissionsForRecovery(): Array<String> =
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
         arrayOf(
             android.Manifest.permission.READ_MEDIA_IMAGES,

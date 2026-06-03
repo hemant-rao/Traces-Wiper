@@ -73,7 +73,7 @@ sealed class ShredAlgorithm(
         "Permanent Delete Mode",
         35,
         "Maximum Security",
-        "Safely deletes your file forever making it completely unrecoverable by overwriting it 35 times."
+        "Overwrites your file 35 times before deleting it, so normal recovery tools can't bring the data back."
     ) {
         override fun getPassPatterns(fileSize: Long): List<PatternType> {
             val list = mutableListOf<PatternType>()
@@ -357,7 +357,7 @@ class ShredderViewModel(application: Application) : AndroidViewModel(application
                         is ShredOutcome.NeedsConsent ->
                             pendingConsent.add(Triple(fileInfo, outcome.mediaUri, outcome.wipedBytes))
                         is ShredOutcome.WipedNotDeleted -> {
-                            addLog("⚠️ ${fileInfo.name}: data was overwritten and is unrecoverable, but the file entry could not be removed. Grant 'All files access' to fully delete it.")
+                            addLog("⚠️ ${fileInfo.name}: data was overwritten (normal recovery tools can't read it), but the file entry could not be removed. Grant 'All files access' to fully delete it.")
                             try {
                                 val prefs = context.getSharedPreferences("shredder_prefs", android.content.Context.MODE_PRIVATE)
                                 val resolvedPath = resolveDocumentToFilePath(context, fileInfo.uri)
@@ -401,8 +401,8 @@ class ShredderViewModel(application: Application) : AndroidViewModel(application
                 addLog("──────────────────────────────────────")
                 addLog("✅ Session Finished! Shredded $successCount/${filesToShred.size} files successfully.")
                 addLog("Permanently deleted ${formatSize(bytesWipedInSession)} of data safely.")
-                addLog("Storage space has been completely freed and reclaimed.")
-                addLog("Deleted files are now impossible to recover.")
+                addLog("Storage space has been freed and reclaimed.")
+                addLog("Overwritten data can no longer be brought back by normal recovery tools.")
 
                 _progressState.value = _progressState.value.copy(
                     currentFileName = "",
@@ -838,9 +838,24 @@ class ShredderViewModel(application: Application) : AndroidViewModel(application
             // Zero out memory of chars securely before GC collects it
             chars.fill('\u0000') // Zero-fill char array!
             
+            // Actually clear the system clipboard so a copy of this text isn't left behind
+            // there (the one place an app can genuinely scrub a lingering copy). Strings
+            // themselves are immutable on the JVM and can't be zeroed, so we don't claim to.
+            val clipboardCleared = runCatching {
+                val cm = getApplication<Application>()
+                    .getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+                        as android.content.ClipboardManager
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    cm.clearPrimaryClip()
+                } else {
+                    cm.setPrimaryClip(android.content.ClipData.newPlainText("", ""))
+                }
+            }.isSuccess
+
             val timestamp = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())
             _wipedTextLogs.update { logs ->
-                listOf("[$timestamp] ✅ Successfully securely wiped ${textToShred.length} characters from memory.") + logs
+                val clip = if (clipboardCleared) " Clipboard cleared." else ""
+                listOf("[$timestamp] ✅ Removed ${textToShred.length} characters from the app.$clip") + logs
             }
             } finally {
                 // Always release the flag so cancellation/throw never pins the overlay.
