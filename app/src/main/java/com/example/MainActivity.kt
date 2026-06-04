@@ -21,10 +21,14 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
@@ -73,6 +77,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.ViewAgenda
@@ -105,16 +110,35 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.unit.IntOffset
+import kotlin.math.roundToInt
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.zIndex
+import androidx.compose.foundation.layout.offset
+import kotlin.math.roundToInt
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
@@ -127,6 +151,7 @@ import coil.compose.AsyncImage
 import androidx.compose.ui.layout.ContentScale
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.data.AppTexts
 import com.example.ui.SelectedFileInfo
 import com.example.ui.ShredAlgorithm
 import com.example.ui.ShredProgressState
@@ -239,11 +264,52 @@ fun ShredderAppScreen(
 ) {
     val context = LocalContext.current
     var selectedTab by remember { mutableStateOf(0) }
+
+    val density = LocalDensity.current
+    var headerHeightPx by remember { mutableStateOf(0f) }
+    var headerOffsetHeightPx by remember { mutableStateOf(0f) }
+
+    val nestedScrollConnection = remember(headerHeightPx) {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                if (headerHeightPx == 0f) return Offset.Zero
+                val delta = available.y
+                val newOffset = headerOffsetHeightPx + delta
+                if (delta < 0) { // scrolling down (collapsing)
+                    val oldOffset = headerOffsetHeightPx
+                    headerOffsetHeightPx = newOffset.coerceIn(-headerHeightPx, 0f)
+                    val consumed = headerOffsetHeightPx - oldOffset
+                    return Offset(0.0f, consumed)
+                }
+                return Offset.Zero
+            }
+
+            override fun onPostScroll(
+                consumed: Offset,
+                available: Offset,
+                source: NestedScrollSource
+            ): Offset {
+                if (headerHeightPx == 0f) return Offset.Zero
+                val delta = available.y
+                if (delta > 0) { // scrolling up (expanding)
+                    val oldOffset = headerOffsetHeightPx
+                    headerOffsetHeightPx = (headerOffsetHeightPx + delta).coerceIn(-headerHeightPx, 0f)
+                    val consumedPx = headerOffsetHeightPx - oldOffset
+                    return Offset(0.0f, consumedPx)
+                }
+                return Offset.Zero
+            }
+        }
+    }
+
+    LaunchedEffect(selectedTab) {
+        headerOffsetHeightPx = 0f
+    }
     
     // Three top-level tabs; related tools are grouped into inner sub-tabs within each.
     val tabs = listOf(
         CyberTabItem("Shred", Icons.Default.Delete, "Securely destroy data"),
-        CyberTabItem("Recover", Icons.Default.Restore, "Find & restore deleted data"),
+        CyberTabItem("Recover", Icons.Default.Search, "Find & restore deleted data"),
         CyberTabItem("History", Icons.Default.History, "Logs & security standards")
     )
 
@@ -255,6 +321,30 @@ fun ShredderAppScreen(
     val isScanning by viewModel.isScanning.collectAsStateWithLifecycle()
     val isDeepWiping by viewModel.isDeepWiping.collectAsStateWithLifecycle()
     val isShreddingNote by viewModel.isShreddingNote.collectAsStateWithLifecycle()
+
+    val recoverableViewModel: com.example.recover.RecoverableTracesViewModel = viewModel()
+    val recoverableUiState by recoverableViewModel.ui.collectAsStateWithLifecycle()
+    val isRecoverableScanning = recoverableUiState.scanning
+    val isRecoverableWiping = recoverableUiState.wiping
+
+    val dataRecoveryViewModel: com.example.recover.DataRecoveryViewModel = viewModel()
+    val dataRecoveryUiState by dataRecoveryViewModel.ui.collectAsStateWithLifecycle()
+    val isDataRecoveryScanning = dataRecoveryUiState.scanning
+    val isDataRecoveryRecovering = dataRecoveryUiState.recovering
+
+    val deepWipeViewModel: com.example.wipe.DeepWipeViewModel = viewModel()
+    val deepWipeState by deepWipeViewModel.state.collectAsStateWithLifecycle()
+    val isDeepWipeActive = deepWipeState is com.example.wipe.DeepWipeViewModel.WipeState.Running
+
+    val isAnyProcessRunning = progressState.isShredding || 
+                              isScanning || 
+                              isDeepWiping || 
+                              isShreddingNote || 
+                              isDeepWipeActive ||
+                              isRecoverableScanning ||
+                              isRecoverableWiping ||
+                              isDataRecoveryScanning ||
+                              isDataRecoveryRecovering
 
     val sweepProg by viewModel.sweepProgress.collectAsStateWithLifecycle()
     val sweepTitle by viewModel.sweepTitle.collectAsStateWithLifecycle()
@@ -297,21 +387,25 @@ fun ShredderAppScreen(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .zIndex(1f)
+                .background(CarbonDarkBg)
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    imageVector = Icons.Default.Lock,
-                    contentDescription = "Shield Guard",
-                    tint = NeonGreen,
-                    modifier = Modifier.size(18.dp)
+                androidx.compose.foundation.Image(
+                    painter = androidx.compose.ui.res.painterResource(id = R.drawable.ic_logo_shield),
+                    contentDescription = "Traces Wiper Pro Logo",
+                    contentScale = androidx.compose.ui.layout.ContentScale.Fit,
+                    modifier = Modifier
+                        .padding(end = 6.dp)
+                        .size(48.dp)
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Column {
                     Text(
-                        text = "CYBERWIPE",
+                        text = AppTexts.APP_DISPLAY_NAME.uppercase(),
                         color = TextPrimary,
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Bold,
@@ -319,7 +413,7 @@ fun ShredderAppScreen(
                         letterSpacing = (0.5).sp
                     )
                     Text(
-                        text = "100% OFFLINE • USER PRIVACY SECURED",
+                        text = AppTexts.APP_TAGLINE,
                         color = TerminalCyan,
                         fontSize = 8.sp,
                         fontWeight = FontWeight.Bold,
@@ -333,24 +427,30 @@ fun ShredderAppScreen(
                 // Compact Theme Switcher (Elegant custom Box avoiding default M3 oversized minimum touch targets)
                 Box(
                     modifier = Modifier
-                        .size(32.dp)
+                        .size(36.dp)
                         .background(
                             if (ThemeState.isDarkTheme) Color(0xFF131A2A) else Color(0xFFE2E8F0),
-                            RoundedCornerShape(6.dp)
+                            RoundedCornerShape(8.dp)
                         )
                         .border(
                             1.dp,
                             SlateBorder,
-                            RoundedCornerShape(6.dp)
+                            RoundedCornerShape(8.dp)
                         )
-                        .clickable { ThemeState.isDarkTheme = !ThemeState.isDarkTheme },
+                        .clickable {
+                            if (isAnyProcessRunning) {
+                                Toast.makeText(context, AppTexts.SYSTEM_BUSY_TOAST, Toast.LENGTH_SHORT).show()
+                            } else {
+                                ThemeState.isDarkTheme = !ThemeState.isDarkTheme
+                            }
+                        },
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         imageVector = if (ThemeState.isDarkTheme) Icons.Default.LightMode else Icons.Default.DarkMode,
                         contentDescription = "Toggle Theme",
                         tint = if (ThemeState.isDarkTheme) Color(0xFFFBBF24) else Color(0xFF475569),
-                        modifier = Modifier.size(15.dp)
+                        modifier = Modifier.size(20.dp)
                     )
                 }
 
@@ -372,11 +472,93 @@ fun ShredderAppScreen(
             }
         }
 
-        CompactDashboardHeader(
-            historyCount = historyLog.size,
-            totalBytesShredded = historyLog.fold(0L) { acc, h -> val n = acc + h.originalSize.coerceAtLeast(0L); if (n < acc) Long.MAX_VALUE else n },
-            securityScore = if (historyLog.isEmpty()) "0%" else if (historyLog.any { it.passes >= 3 }) "A++ SECURE" else "BASIC"
-        )
+        if (isAnyProcessRunning) {
+            LinearProgressIndicator(
+                modifier = Modifier.fillMaxWidth().height(2.dp),
+                color = NeonGreen,
+                trackColor = Color.Transparent
+            )
+        }
+
+        val showStatsHeader = selectedTab == 0
+
+        // Intermediate sliding frame box with custom collapsing header
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .clipToBounds()
+                .then(if (showStatsHeader) Modifier.nestedScroll(nestedScrollConnection) else Modifier)
+        ) {
+            val headerOffsetHeightDp = with(density) { headerOffsetHeightPx.toDp() }
+            val headerHeightDp = with(density) { headerHeightPx.toDp() }
+
+            // Content Frame - shifts up and expands to fill space dynamically as header collapses
+            val paddingTopValue = if (showStatsHeader) {
+                java.lang.Math.max(0f, (headerHeightDp + headerOffsetHeightDp).value).dp
+            } else {
+                0.dp
+            }
+
+            AnimatedContent(
+                targetState = selectedTab,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(top = paddingTopValue),
+                transitionSpec = {
+                    val duration = 280
+                    if (targetState > initialState) {
+                        (slideInHorizontally(animationSpec = spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessMediumLow)) { it } + fadeIn(animationSpec = tween(duration)))
+                            .togetherWith(slideOutHorizontally(animationSpec = spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessMediumLow)) { -it / 3 } + fadeOut(animationSpec = tween(duration)))
+                    } else {
+                        (slideInHorizontally(animationSpec = spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessMediumLow)) { -it } + fadeIn(animationSpec = tween(duration)))
+                            .togetherWith(slideOutHorizontally(animationSpec = spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessMediumLow)) { it / 3 } + fadeOut(animationSpec = tween(duration)))
+                    }
+                },
+                label = "TabTransition"
+            ) { targetTab ->
+                when (targetTab) {
+                    0 -> ShredHubTab(
+                        selectedFiles = selectedFiles,
+                        currentAlgo = currentAlgo,
+                        progressState = progressState,
+                        onPickFiles = { filePickerLauncher.launch(arrayOf("*/*")) },
+                        onRemoveFile = { viewModel.removeFile(it) },
+                        onAlgoSelected = { viewModel.updateSelectedAlgorithm(it) },
+                        onStartShred = { viewModel.startShredding() },
+                        viewModel = viewModel,
+                        isStorageGranted = isStorageGranted,
+                        onRequestStoragePermission = onRequestStoragePermission,
+                        isSystemBusy = isAnyProcessRunning
+                    )
+                    1 -> RecoverHubTab(isSystemBusy = isAnyProcessRunning)
+                    2 -> HistoryAndGuideTab(
+                        historyLog = historyLog,
+                        onClearAll = { viewModel.clearHistory() },
+                        viewModel = viewModel,
+                        isSystemBusy = isAnyProcessRunning
+                    )
+                }
+            }
+
+            if (showStatsHeader) {
+                // Collapsing Statistics Header overlay block
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .offset { IntOffset(0, headerOffsetHeightPx.roundToInt()) }
+                        .onGloballyPositioned { coordinates ->
+                            headerHeightPx = coordinates.size.height.toFloat()
+                        }
+                ) {
+                    CompactDashboardHeader(
+                        historyCount = historyLog.size,
+                        totalBytesShredded = historyLog.fold(0L) { acc, h -> val n = acc + h.originalSize.coerceAtLeast(0L); if (n < acc) Long.MAX_VALUE else n },
+                        securityScore = if (historyLog.isEmpty()) "0%" else if (historyLog.any { it.passes >= 3 }) "A++ SECURE" else "BASIC"
+                    )
+                }
+            }
+        }
 
         Spacer(modifier = Modifier.height(6.dp))
 
@@ -392,16 +574,30 @@ fun ShredderAppScreen(
         ) {
             tabs.forEachIndexed { index, tabItem ->
                 val isSelected = selectedTab == index
-                val tabBackground = if (isSelected) NeonGreen.copy(alpha = 0.12f) else Color.Transparent
-                val tabTextAndIconColor = if (isSelected) NeonGreen else TextSecondary
+                val tabBackground by animateColorAsState(
+                    targetValue = if (isSelected) NeonGreen.copy(alpha = 0.12f) else Color.Transparent,
+                    animationSpec = tween(240),
+                    label = "TabBgColor"
+                )
+                val tabTextAndIconColor by animateColorAsState(
+                    targetValue = if (isSelected) NeonGreen else TextSecondary,
+                    animationSpec = tween(240),
+                    label = "TabTextColor"
+                )
 
                 Box(
                     modifier = Modifier
                         .weight(1f)
                         .clip(RoundedCornerShape(10.dp))
                         .background(tabBackground)
-                        .clickable { selectedTab = index }
-                        .padding(vertical = 10.dp)
+                        .clickable {
+                            if (isAnyProcessRunning) {
+                                Toast.makeText(context, "🔒 Active secure execution. Navigation is locked.", Toast.LENGTH_SHORT).show()
+                            } else {
+                                selectedTab = index
+                            }
+                        }
+                        .padding(vertical = 6.dp)
                         .testTag("tab_$index"),
                     contentAlignment = Alignment.Center
                 ) {
@@ -413,14 +609,14 @@ fun ShredderAppScreen(
                             imageVector = tabItem.icon,
                             contentDescription = tabItem.label,
                             tint = tabTextAndIconColor,
-                            modifier = Modifier.size(16.dp)
+                            modifier = Modifier.size(20.dp)
                         )
-                        Spacer(modifier = Modifier.height(4.dp))
+                        Spacer(modifier = Modifier.height(2.dp))
                         Text(
                             text = tabItem.label,
                             color = tabTextAndIconColor,
                             fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                            fontSize = 11.sp,
+                            fontSize = 10.sp,
                             fontFamily = FontFamily.SansSerif,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
@@ -429,38 +625,10 @@ fun ShredderAppScreen(
                 }
             }
         }
-
-        // Content Frame
-        Box(
-            modifier = Modifier
-                .weight(1.0f)
-                .fillMaxWidth()
-        ) {
-            when (selectedTab) {
-                0 -> ShredHubTab(
-                    selectedFiles = selectedFiles,
-                    currentAlgo = currentAlgo,
-                    progressState = progressState,
-                    onPickFiles = { filePickerLauncher.launch(arrayOf("*/*")) },
-                    onRemoveFile = { viewModel.removeFile(it) },
-                    onAlgoSelected = { viewModel.updateSelectedAlgorithm(it) },
-                    onStartShred = { viewModel.startShredding() },
-                    viewModel = viewModel,
-                    isStorageGranted = isStorageGranted,
-                    onRequestStoragePermission = onRequestStoragePermission
-                )
-                1 -> RecoverHubTab()
-                2 -> HistoryAndGuideTab(
-                    historyLog = historyLog,
-                    onClearAll = { viewModel.clearHistory() },
-                    viewModel = viewModel
-                )
-            }
-        }
     }
 
     // Full-Page Overlay Cyber-Security Process Loader Overlay
-    if (isScanning || isDeepWiping) {
+    if (isScanning || isDeepWiping || progressState.isShredding || isShreddingNote) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -492,12 +660,22 @@ fun ShredderAppScreen(
                             strokeWidth = 3.5.dp,
                             modifier = Modifier.size(56.dp)
                         )
-                        Icon(
-                            imageVector = if (progressState.isShredding || isDeepWiping) Icons.Default.Warning else Icons.Default.Lock,
-                            contentDescription = null,
-                            tint = themeAccentColor,
-                            modifier = Modifier.size(22.dp)
-                        )
+                        if (progressState.isShredding || isDeepWiping) {
+                            Icon(
+                                imageVector = Icons.Default.Warning,
+                                contentDescription = null,
+                                tint = themeAccentColor,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        } else {
+                            androidx.compose.foundation.Image(
+                                painter = androidx.compose.ui.res.painterResource(id = R.drawable.ic_logo_shield),
+                                contentDescription = null,
+                                contentScale = androidx.compose.ui.layout.ContentScale.Fit,
+                                modifier = Modifier
+                                    .size(48.dp)
+                            )
+                        }
                     }
 
                     val overlayTitleText = when {
@@ -505,7 +683,7 @@ fun ShredderAppScreen(
                         isDeepWiping -> "DEEP WIPE IN PROGRESS"
                         isScanning -> "SCANNING STORAGE"
                         isShreddingNote -> "DELETING TEXT SECURELY"
-                        else -> "SYSTEM PROTOCOL ACTIVE"
+                        else -> AppTexts.SYSTEM_BUSY_ACTIVE
                     }
 
                     Text(
@@ -519,7 +697,7 @@ fun ShredderAppScreen(
 
                     if (progressState.isShredding) {
                         Text(
-                            text = "Destroyed: ${Math.max(0, progressState.currentFileIndex - 1)} | Remaining: ${progressState.totalFilesCount - progressState.currentFileIndex + 1}",
+                            text = "Erased ${Math.max(0, progressState.currentFileIndex - 1)} of ${progressState.totalFilesCount} files permanently",
                             color = TextPrimary,
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Medium,
@@ -528,9 +706,12 @@ fun ShredderAppScreen(
                         )
 
                         Column(modifier = Modifier.fillMaxWidth()) {
+                            val totalFiles = Math.max(1, progressState.totalFilesCount)
+                            val currentFileIdx = Math.max(1, progressState.currentFileIndex)
                             val totalPasses = Math.max(1, progressState.totalPasses)
                             val passComponent = Math.max(0f, progressState.currentPass - 1f)
-                            val overallProgress = ((passComponent + (progressState.passProgress / 100f)) / totalPasses).coerceIn(0f, 1f)
+                            val fileProgress = ((passComponent + (progressState.passProgress / 100f)) / totalPasses).coerceIn(0f, 1f)
+                            val overallProgress = (((currentFileIdx - 1) + fileProgress) / totalFiles).coerceIn(0f, 1f)
 
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
@@ -538,7 +719,7 @@ fun ShredderAppScreen(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
-                                    text = "DESTROYING DATA",
+                                    text = "SECURE ERASING IN PROGRESS...",
                                     color = TextSecondary,
                                     fontSize = 10.sp,
                                     fontFamily = FontFamily.Monospace
@@ -662,8 +843,10 @@ data class CyberTabItem(
 fun InnerTabBar(
     titles: List<String>,
     selected: Int,
-    onSelect: (Int) -> Unit
+    onSelect: (Int) -> Unit,
+    enabled: Boolean = true
 ) {
+    val context = LocalContext.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -674,16 +857,30 @@ fun InnerTabBar(
     ) {
         titles.forEachIndexed { index, title ->
             val isSelected = selected == index
-            val tabBackground = if (isSelected) NeonGreen.copy(alpha = 0.12f) else Color.Transparent
-            val tabTextColor = if (isSelected) NeonGreen else TextSecondary
+            val tabBackground by animateColorAsState(
+                targetValue = if (isSelected) NeonGreen.copy(alpha = 0.12f) else Color.Transparent,
+                animationSpec = tween(240),
+                label = "TabBgColor"
+            )
+            val tabTextColor by animateColorAsState(
+                targetValue = if (isSelected) NeonGreen else TextSecondary,
+                animationSpec = tween(240),
+                label = "TabTextColor"
+            )
 
             Box(
                 modifier = Modifier
                     .weight(1f)
                     .clip(RoundedCornerShape(10.dp))
                     .background(tabBackground)
-                    .clickable { onSelect(index) }
-                    .padding(vertical = 10.dp),
+                    .clickable {
+                        if (!enabled) {
+                            Toast.makeText(context, "🔒 Active secure execution. Sub-navigation is locked.", Toast.LENGTH_SHORT).show()
+                        } else {
+                            onSelect(index)
+                        }
+                    }
+                    .padding(vertical = 6.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
@@ -713,28 +910,42 @@ fun ShredHubTab(
     onStartShred: () -> Unit,
     viewModel: ShredderViewModel,
     isStorageGranted: Boolean = true,
-    onRequestStoragePermission: () -> Unit = {}
+    onRequestStoragePermission: () -> Unit = {},
+    isSystemBusy: Boolean = false
 ) {
     var innerTab by remember { mutableStateOf(0) }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(14.dp),
+            .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         InnerTabBar(
             titles = listOf("Files", "Text", "Deep Wipe"),
             selected = innerTab,
-            onSelect = { innerTab = it }
+            onSelect = { innerTab = it },
+            enabled = !isSystemBusy
         )
 
-        Box(
+        AnimatedContent(
+            targetState = innerTab,
             modifier = Modifier
                 .weight(1f)
-                .fillMaxWidth()
-        ) {
-            when (innerTab) {
+                .fillMaxWidth(),
+            transitionSpec = {
+                val duration = 240
+                if (targetState > initialState) {
+                    (slideInHorizontally(animationSpec = spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessMediumLow)) { it } + fadeIn(animationSpec = tween(duration)))
+                        .togetherWith(slideOutHorizontally(animationSpec = spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessMediumLow)) { -it / 3 } + fadeOut(animationSpec = tween(duration)))
+                } else {
+                    (slideInHorizontally(animationSpec = spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessMediumLow)) { -it } + fadeIn(animationSpec = tween(duration)))
+                        .togetherWith(slideOutHorizontally(animationSpec = spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessMediumLow)) { it / 3 } + fadeOut(animationSpec = tween(duration)))
+                }
+            },
+            label = "ShredHubTabTransition"
+        ) { targetInnerTab ->
+            when (targetInnerTab) {
                 0 -> FileShredderTab(
                     selectedFiles = selectedFiles,
                     currentAlgo = currentAlgo,
@@ -745,10 +956,11 @@ fun ShredHubTab(
                     onStartShred = onStartShred,
                     viewModel = viewModel,
                     isStorageGranted = isStorageGranted,
-                    onRequestStoragePermission = onRequestStoragePermission
+                    onRequestStoragePermission = onRequestStoragePermission,
+                    isSystemBusy = isSystemBusy
                 )
-                1 -> TextWiperTab(viewModel = viewModel)
-                2 -> DeepWipeTab(viewModel = viewModel)
+                1 -> TextWiperTab(viewModel = viewModel, isSystemBusy = isSystemBusy)
+                2 -> DeepWipeTab(viewModel = viewModel, isSystemBusy = isSystemBusy)
             }
         }
     }
@@ -758,34 +970,47 @@ fun ShredHubTab(
  * "Recover" top-level tab. Groups trace discovery and data restoration into inner sub-tabs.
  */
 @Composable
-fun RecoverHubTab() {
+fun RecoverHubTab(isSystemBusy: Boolean = false) {
     var innerTab by remember { mutableStateOf(0) }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(14.dp),
+            .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         InnerTabBar(
             titles = listOf("Find Traces", "Restore"),
             selected = innerTab,
-            onSelect = { innerTab = it }
+            onSelect = { innerTab = it },
+            enabled = !isSystemBusy
         )
 
-        Box(
+        AnimatedContent(
+            targetState = innerTab,
             modifier = Modifier
                 .weight(1f)
-                .fillMaxWidth()
-        ) {
-            when (innerTab) {
+                .fillMaxWidth(),
+            transitionSpec = {
+                val duration = 240
+                if (targetState > initialState) {
+                    (slideInHorizontally(animationSpec = spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessMediumLow)) { it } + fadeIn(animationSpec = tween(duration)))
+                        .togetherWith(slideOutHorizontally(animationSpec = spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessMediumLow)) { -it / 3 } + fadeOut(animationSpec = tween(duration)))
+                } else {
+                    (slideInHorizontally(animationSpec = spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessMediumLow)) { -it } + fadeIn(animationSpec = tween(duration)))
+                        .togetherWith(slideOutHorizontally(animationSpec = spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessMediumLow)) { it / 3 } + fadeOut(animationSpec = tween(duration)))
+                }
+            },
+            label = "RecoverHubTabTransition"
+        ) { targetInnerTab ->
+            when (targetInnerTab) {
                 0 -> {
                     val recoverableViewModel: com.example.recover.RecoverableTracesViewModel = viewModel()
-                    com.example.recover.RecoverableTracesScreen(recoverableViewModel)
+                    com.example.recover.RecoverableTracesScreen(recoverableViewModel, isSystemBusy = isSystemBusy)
                 }
                 1 -> {
                     val dataRecoveryViewModel: com.example.recover.DataRecoveryViewModel = viewModel()
-                    com.example.recover.DataRecoveryScreen(dataRecoveryViewModel)
+                    com.example.recover.DataRecoveryScreen(dataRecoveryViewModel, isSystemBusy = isSystemBusy)
                 }
             }
         }
@@ -796,29 +1021,43 @@ fun RecoverHubTab() {
 fun HistoryAndGuideTab(
     historyLog: List<com.example.data.ShredHistory>,
     onClearAll: () -> Unit,
-    viewModel: ShredderViewModel
+    viewModel: ShredderViewModel,
+    isSystemBusy: Boolean = false
 ) {
     var insideTabSelection by remember { mutableStateOf(0) } // 0 = Shred Logs, 1 = Military Standards
     
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(14.dp),
+            .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         InnerTabBar(
             titles = listOf("Shred Records", "Security Standards"),
             selected = insideTabSelection,
-            onSelect = { insideTabSelection = it }
+            onSelect = { insideTabSelection = it },
+            enabled = !isSystemBusy
         )
 
-        Box(
+        AnimatedContent(
+            targetState = insideTabSelection,
             modifier = Modifier
                 .weight(1f)
-                .fillMaxWidth()
-        ) {
-            if (insideTabSelection == 0) {
-                ShredHistoryTab(historyLog, onClearAll, viewModel)
+                .fillMaxWidth(),
+            transitionSpec = {
+                val duration = 240
+                if (targetState > initialState) {
+                    (slideInHorizontally(animationSpec = spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessMediumLow)) { it } + fadeIn(animationSpec = tween(duration)))
+                        .togetherWith(slideOutHorizontally(animationSpec = spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessMediumLow)) { -it / 3 } + fadeOut(animationSpec = tween(duration)))
+                } else {
+                    (slideInHorizontally(animationSpec = spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessMediumLow)) { -it } + fadeIn(animationSpec = tween(duration)))
+                        .togetherWith(slideOutHorizontally(animationSpec = spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessMediumLow)) { it / 3 } + fadeOut(animationSpec = tween(duration)))
+                }
+            },
+            label = "HistoryAndGuideTabTransition"
+        ) { targetInsideTab ->
+            if (targetInsideTab == 0) {
+                ShredHistoryTab(historyLog, onClearAll, viewModel, isSystemBusy = isSystemBusy)
             } else {
                 AlgorithmsTab()
             }
@@ -853,50 +1092,264 @@ fun CompactDashboardHeader(
     }
 
     val usedPercentage = if (totalSpace > 0) (usedSpace.toFloat() / totalSpace.toFloat()) else 0f
+    var isExpanded by remember { mutableStateOf(false) }
 
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 2.dp),
+            .padding(horizontal = 16.dp, vertical = 6.dp)
+            .clickable { isExpanded = !isExpanded },
         colors = CardDefaults.cardColors(containerColor = CharcoalSurface),
         border = BorderStroke(1.dp, SlateBorder),
-        shape = RoundedCornerShape(8.dp)
+        shape = RoundedCornerShape(12.dp)
     ) {
-        Box(modifier = Modifier.fillMaxWidth()) {
-            // Background Free Space Bar
-            val freePercentage = 1f - usedPercentage
-            Box(modifier = Modifier.fillMaxWidth().height(4.dp).align(Alignment.BottomCenter).background(Color(0xFF1E293B)))
-            Box(modifier = Modifier.fillMaxWidth(freePercentage.coerceIn(0f, 1f)).height(4.dp).align(Alignment.BottomCenter).background(NeonGreen))
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp)
+        ) {
+            if (!isExpanded) {
+                // Collapsed sleek state
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Info,
+                            contentDescription = null,
+                            tint = NeonGreen,
+                            modifier = Modifier.size(13.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "SHREDS: $historyCount  •  WIPED: ${formatBytesStatic(totalBytesShredded)}  •  SECURE: $securityScore",
+                            color = TextPrimary,
+                            fontSize = 10.sp,
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = "EXPAND ▼",
+                            color = TextSecondary,
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
+                }
+            } else {
+                // Fully expanded state with high fidelity metrics and storage breakdown
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.Info,
+                            contentDescription = null,
+                            tint = NeonGreen,
+                            modifier = Modifier.size(13.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = AppTexts.METRICS_TITLE,
+                            color = NeonGreen,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
+                    Text(
+                        text = "COLLAPSE ▲",
+                        color = TextSecondary,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace
+                    )
+                }
 
-            // Content
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "Shredded $historyCount",
-                    color = TextPrimary,
-                    fontSize = 11.sp,
-                    fontFamily = FontFamily.Monospace,
-                    fontWeight = FontWeight.Bold
+                // Row 1: The Three High-Fidelity Security Metrics
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // Metric 1: Shredded Count
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            text = "$historyCount",
+                            color = NeonGreen,
+                            fontSize = 18.sp,
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.ExtraBold
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = "SHREDDED",
+                            color = TextSecondary,
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 0.5.sp
+                        )
+                    }
+
+                    // Vertical Divider
+                    Box(
+                        modifier = Modifier
+                            .width(1.dp)
+                            .height(28.dp)
+                            .background(SlateBorder)
+                    )
+
+                    // Metric 2: Total Wiped
+                    Column(
+                        modifier = Modifier.weight(1.2f),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            text = formatBytesStatic(totalBytesShredded),
+                            color = TextPrimary,
+                            fontSize = 16.sp,
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.ExtraBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = "TOTAL WIPED",
+                            color = TextSecondary,
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 0.5.sp
+                        )
+                    }
+
+                    // Vertical Divider
+                    Box(
+                        modifier = Modifier
+                            .width(1.dp)
+                            .height(28.dp)
+                            .background(SlateBorder)
+                    )
+
+                    // Metric 3: Security Status
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            text = securityScore,
+                            color = TerminalCyan,
+                            fontSize = 14.sp,
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.ExtraBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = "SECURITY",
+                            color = TextSecondary,
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 0.5.sp
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                // Thin separating horizontal line
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(1.dp)
+                        .background(SlateBorder.copy(alpha = 0.6f))
                 )
-                Text(
-                    text = "Total Wiped ${formatBytesStatic(totalBytesShredded)}",
-                    color = TextPrimary,
-                    fontSize = 11.sp,
-                    fontFamily = FontFamily.Monospace,
-                    fontWeight = FontWeight.Bold
-                )
-                Text(
-                    text = "Security $securityScore",
-                    color = TextPrimary,
-                    fontSize = 11.sp,
-                    fontFamily = FontFamily.Monospace,
-                    fontWeight = FontWeight.Bold
-                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Phone Storage Section
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .size(6.dp)
+                                    .background(NeonGreen, CircleShape)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "DEVICE STORAGE STATUS",
+                                color = TextPrimary,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                letterSpacing = 0.5.sp
+                            )
+                        }
+                        Text(
+                            text = String.format(java.util.Locale.US, "%.0f%% Full", usedPercentage * 100),
+                            color = if (usedPercentage > 0.85f) LaserRed else TextSecondary,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    // Modern visual storage progress bar with rounded borders and a neon vibe
+                    LinearProgressIndicator(
+                        progress = { if (totalSpace > 0) usedPercentage else 0f },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(8.dp)
+                            .clip(RoundedCornerShape(4.dp)),
+                        color = NeonGreen,
+                        trackColor = SlateBorder.copy(alpha = 0.5f),
+                        strokeCap = StrokeCap.Round
+                    )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    // Clear layout showing used & free space
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Used: ${formatBytesStatic(usedSpace)}",
+                            color = TextSecondary,
+                            fontSize = 10.sp,
+                            fontFamily = FontFamily.Monospace
+                        )
+                        Text(
+                            text = "Free: ${formatBytesStatic(freeSpace)}",
+                            color = TextPrimary,
+                            fontSize = 10.sp,
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
             }
         }
     }
@@ -954,16 +1407,19 @@ fun FileShredderTab(
     onStartShred: () -> Unit,
     viewModel: ShredderViewModel,
     isStorageGranted: Boolean = true,
-    onRequestStoragePermission: () -> Unit = {}
+    onRequestStoragePermission: () -> Unit = {},
+    isSystemBusy: Boolean = false
 ) {
     var showConfirmShredDialog by remember { mutableStateOf(false) }
+    val showWarningNote by viewModel.showWarningNote.collectAsStateWithLifecycle()
+    val showStorageWarningNote by viewModel.showStorageWarningNote.collectAsStateWithLifecycle()
 
     if (showConfirmShredDialog) {
         CyberConfirmDialog(
-            title = "EXECUTE SECURE SHREDDING",
-            message = "You are about to permanently delete ${selectedFiles.size} selected file(s). This overwrites your files ${currentAlgo.totalPasses} times before deleting them, so normal recovery tools can't bring them back. This cannot be undone.\n\nAre you sure you want to proceed?",
-            confirmText = "CONFIRM AND SHRED",
-            cancelText = "ABORT PROTOCOL",
+            title = AppTexts.SHRED_CONFIRM_TITLE,
+            message = "You are about to permanently delete ${selectedFiles.size} selected file(s). " + AppTexts.SHRED_CONFIRM_MESSAGE.substringAfter("permanently delete the selected files. "),
+            confirmText = "PERMANENTLY DELETE",
+            cancelText = "CANCEL",
             onConfirm = {
                 showConfirmShredDialog = false
                 onStartShred()
@@ -981,7 +1437,7 @@ fun FileShredderTab(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(16.dp),
+                .padding(vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             Card(
@@ -1009,7 +1465,7 @@ fun FileShredderTab(
                             )
                             Spacer(modifier = Modifier.width(10.dp))
                             Text(
-                                "SHREDDING PROTOCOL ACTIVE...",
+                                "SECURELY DELETING FILES...",
                                 color = LaserRed,
                                 fontWeight = FontWeight.Bold,
                                 fontFamily = FontFamily.Monospace,
@@ -1029,21 +1485,24 @@ fun FileShredderTab(
                     Spacer(modifier = Modifier.height(28.dp))
 
                     // Progress indicators
+                    val totalFiles = Math.max(1, progressState.totalFilesCount)
+                    val currentFileIdx = Math.max(1, progressState.currentFileIndex)
+                    val totalPasses = Math.max(1, progressState.totalPasses)
+                    val passComponent = Math.max(0f, progressState.currentPass - 1f)
+                    val fileProgress = ((passComponent + (progressState.passProgress / 100f)) / totalPasses).coerceIn(0f, 1f)
+                    val overallProgress = (((currentFileIdx - 1) + fileProgress) / totalFiles).coerceIn(0f, 1f)
+
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Text(
-                            text = "Security Swipe Active",
+                            text = "Secure Erasing Progress",
                             color = TextSecondary,
                             fontSize = 11.sp,
                             fontFamily = FontFamily.SansSerif
                         )
                         
-                        val totalPasses = Math.max(1, progressState.totalPasses)
-                        val passComponent = Math.max(0f, progressState.currentPass - 1f)
-                        val overallProgress = ((passComponent + (progressState.passProgress / 100f)) / totalPasses).coerceIn(0f, 1f)
-                            
                         Text(
                             text = "${(overallProgress * 100).toInt()}%",
                             color = ElectricAmber,
@@ -1054,10 +1513,6 @@ fun FileShredderTab(
                     }
 
                     Spacer(modifier = Modifier.height(8.dp))
-
-                    val totalPasses = Math.max(1, progressState.totalPasses)
-                    val passComponent = Math.max(0f, progressState.currentPass - 1f)
-                    val overallProgress = ((passComponent + (progressState.passProgress / 100f)) / totalPasses).coerceIn(0f, 1f)
                     
                     LinearProgressIndicator(
                         progress = { overallProgress },
@@ -1077,41 +1532,59 @@ fun FileShredderTab(
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 16.dp),
+                .padding(vertical = 6.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             item {
-                Spacer(modifier = Modifier.height(8.dp))
-                // Explanatory warning note
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = LaserRed.copy(alpha = 0.1f)),
-                    border = BorderStroke(1.dp, LaserRed.copy(alpha = 0.3f)),
-                    shape = RoundedCornerShape(8.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.padding(12.dp),
-                        verticalAlignment = Alignment.Top
+                if (showWarningNote) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    // Explanatory warning note
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = LaserRed.copy(alpha = 0.1f)),
+                        border = BorderStroke(1.dp, LaserRed.copy(alpha = 0.3f)),
+                        shape = RoundedCornerShape(8.dp)
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.Warning,
-                            contentDescription = "Absolute Warning",
-                            tint = LaserRed,
-                            modifier = Modifier.size(20.dp)
-                        )
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Text(
-                            text = "WARNING: Secure Shredding overwrites the file's data with multiple random passes and then deletes it, so it can't be brought back by normal recovery tools. This cannot be undone — use with absolute caution.",
-                            color = LaserRed,
-                            fontSize = 11.sp,
-                            lineHeight = 15.sp,
-                            fontWeight = FontWeight.SemiBold
-                        )
+                        Box(modifier = Modifier.fillMaxWidth()) {
+                            Row(
+                                modifier = Modifier.padding(start = 12.dp, top = 12.dp, end = 36.dp, bottom = 12.dp),
+                                verticalAlignment = Alignment.Top
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Warning,
+                                    contentDescription = "Absolute Warning",
+                                    tint = LaserRed,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Text(
+                                    text = AppTexts.SHRED_WARNING_WARN,
+                                    color = LaserRed,
+                                    fontSize = 11.sp,
+                                    lineHeight = 15.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                            IconButton(
+                                onClick = { viewModel.dismissWarningNote() },
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .padding(4.dp)
+                                    .size(24.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "Close Warning",
+                                    tint = LaserRed,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
                     }
                 }
             }
 
-            if (!isStorageGranted) {
+            if (!isStorageGranted && showStorageWarningNote) {
                 item {
                     Card(
                         modifier = Modifier.fillMaxWidth().testTag("permission_prompt_card"),
@@ -1119,46 +1592,62 @@ fun FileShredderTab(
                         border = BorderStroke(1.dp, ElectricAmber.copy(alpha = 0.4f)),
                         shape = RoundedCornerShape(8.dp)
                     ) {
-                        Column(modifier = Modifier.padding(12.dp)) {
-                            Row(verticalAlignment = Alignment.Top) {
-                                Icon(
-                                    imageVector = Icons.Default.Info,
-                                    contentDescription = "Permission Info",
-                                    tint = ElectricAmber,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                                Spacer(modifier = Modifier.width(10.dp))
-                                Column {
-                                    Text(
-                                        text = "DIRECT SSD STORAGE ACCESS WIPE LIMITATION",
-                                        color = ElectricAmber,
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        fontFamily = FontFamily.Monospace
+                        Box(modifier = Modifier.fillMaxWidth()) {
+                            Column(modifier = Modifier.padding(start = 12.dp, top = 12.dp, end = 36.dp, bottom = 12.dp)) {
+                                Row(verticalAlignment = Alignment.Top) {
+                                    Icon(
+                                        imageVector = Icons.Default.Info,
+                                        contentDescription = "Permission Info",
+                                        tint = ElectricAmber,
+                                        modifier = Modifier.size(20.dp)
                                     )
-                                    Spacer(modifier = Modifier.height(4.dp))
-                                    Text(
-                                        text = "Without 'All Files Access', the app cannot fully reach all files. Grant this permission to enable completely secure deletion that permanently removes all traces of your data.",
-                                        color = TextPrimary.copy(alpha = 0.85f),
-                                        fontSize = 11.sp,
-                                        lineHeight = 15.sp
-                                    )
-                                    Spacer(modifier = Modifier.height(10.dp))
-                                    Button(
-                                        onClick = onRequestStoragePermission,
-                                        colors = ButtonDefaults.buttonColors(containerColor = ElectricAmber),
-                                        shape = RoundedCornerShape(8.dp),
-                                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-                                    ) {
+                                    Spacer(modifier = Modifier.width(10.dp))
+                                    Column {
                                         Text(
-                                            text = "GRANT DIRECT SECURE STORAGE ACCESS",
-                                            color = Color.Black,
-                                            fontSize = 10.sp,
+                                            text = "DIRECT SSD STORAGE ACCESS WIPE LIMITATION",
+                                            color = ElectricAmber,
+                                            fontSize = 11.sp,
                                             fontWeight = FontWeight.Bold,
                                             fontFamily = FontFamily.Monospace
                                         )
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text(
+                                            text = "Without 'All Files Access', the app cannot fully reach all files. Grant this permission to enable completely secure deletion that permanently removes all traces of your data.",
+                                            color = TextPrimary.copy(alpha = 0.85f),
+                                            fontSize = 11.sp,
+                                            lineHeight = 15.sp
+                                        )
+                                        Spacer(modifier = Modifier.height(10.dp))
+                                        Button(
+                                            onClick = onRequestStoragePermission,
+                                            colors = ButtonDefaults.buttonColors(containerColor = ElectricAmber),
+                                            shape = RoundedCornerShape(8.dp),
+                                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                                        ) {
+                                            Text(
+                                                text = "GRANT DIRECT SECURE STORAGE ACCESS",
+                                                color = Color.Black,
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                fontFamily = FontFamily.Monospace
+                                            )
+                                        }
                                     }
                                 }
+                            }
+                            IconButton(
+                                onClick = { viewModel.dismissStorageWarningNote() },
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .padding(4.dp)
+                                    .size(24.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "Close Storage Limitation Info",
+                                    tint = ElectricAmber,
+                                    modifier = Modifier.size(16.dp)
+                                )
                             }
                         }
                     }
@@ -1193,6 +1682,7 @@ fun FileShredderTab(
 
                             Button(
                                 onClick = onPickFiles,
+                                enabled = !isSystemBusy,
                                 colors = ButtonDefaults.buttonColors(containerColor = NeonGreen),
                                 contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
                                 shape = RoundedCornerShape(12.dp),
@@ -1246,7 +1736,10 @@ fun FileShredderTab(
                         } else {
                             // Display selected files list
                             Column(
-                                modifier = Modifier.fillMaxWidth(),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(max = 240.dp)
+                                    .verticalScroll(rememberScrollState()),
                                 verticalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
                                 selectedFiles.forEach { fileInfo ->
@@ -1307,7 +1800,7 @@ fun FileShredderTab(
                                         fontWeight = FontWeight.Bold,
                                         fontFamily = FontFamily.Monospace,
                                         modifier = Modifier
-                                            .clickable { viewModel.clearSelections() }
+                                            .clickable(enabled = !isSystemBusy) { viewModel.clearSelections() }
                                             .padding(8.dp)
                                     )
                                 }
@@ -1339,7 +1832,7 @@ fun FileShredderTab(
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                "OVERWRITE ALGORITHM",
+                                "ADVANCED WIPING ENGINE",
                                 color = TextPrimary,
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Bold,
@@ -1349,7 +1842,7 @@ fun FileShredderTab(
 
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            "We overwrite your files 35 times before deleting them, so normal recovery apps can't bring the data back. On phone flash storage no app can promise 100% erasure — for an absolute guarantee, also use Deep Wipe or a factory reset.",
+                            AppTexts.SHRED_DESCRIPTION_NOTE,
                             color = TextSecondary,
                             fontSize = 12.sp,
                             lineHeight = 16.sp,
@@ -1378,7 +1871,7 @@ fun FileShredderTab(
                                             if (isSelected) NeonGreen else SlateBorder,
                                             RoundedCornerShape(8.dp)
                                         )
-                                        .clickable { onAlgoSelected(algo) }
+                                        .clickable(enabled = !isSystemBusy) { onAlgoSelected(algo) }
                                         .padding(horizontal = 12.dp, vertical = 10.dp)
                                         .testTag("algo_option_${algo.name}"),
                                     verticalAlignment = Alignment.CenterVertically,
@@ -1410,7 +1903,7 @@ fun FileShredderTab(
                                             .padding(horizontal = 6.dp, vertical = 3.dp)
                                     ) {
                                         Text(
-                                            text = "${algo.totalPasses}P",
+                                            text = "SECURE",
                                             color = if (isSelected) NeonGreen else TextSecondary,
                                             fontSize = 10.sp,
                                             fontWeight = FontWeight.Bold,
@@ -1426,67 +1919,19 @@ fun FileShredderTab(
              // Secure Shred Button Action with Dialog Confirmation
             item {
                 Spacer(modifier = Modifier.height(8.dp))
-                val pickerEnabled = selectedFiles.isNotEmpty() && !progressState.isShredding
+                val pickerEnabled = selectedFiles.isNotEmpty() && !progressState.isShredding && !isSystemBusy
 
-                HoldToConfirmButton(
+                SwipeToExecuteButton(
                     enabled = pickerEnabled,
-                    onConfirmed = {
+                    onExecuted = {
                         showConfirmShredDialog = true
                     },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .testTag("secure_shred_trigger")
-                ) { progress ->
-                    val buttonColor = if (pickerEnabled) LaserRed else SlateBorder
-                    val textColor = if (pickerEnabled) TextPrimary else TextSecondary
-
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(52.dp)
-                            .background(
-                                color = if (progress > 0f) LaserRed.copy(alpha = 0.25f * progress) else CharcoalSurface,
-                                shape = RoundedCornerShape(12.dp)
-                            )
-                            .border(
-                                width = 1.dp,
-                                color = if (progress > 0f) LaserRed else buttonColor,
-                                shape = RoundedCornerShape(12.dp)
-                            )
-                            .clip(RoundedCornerShape(12.dp)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        if (progress > 0f && pickerEnabled) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxHeight()
-                                    .fillMaxWidth(progress)
-                                    .background(LaserRed.copy(alpha = 0.4f))
-                                    .align(Alignment.CenterStart)
-                            )
-                        }
-
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text(
-                                text = if (progress > 0f) "HOLD PROTOCOL: ${(progress * 100).toInt()}%" else if (pickerEnabled) "HOLD TO INITIATE SHRED" else "LOAD ASSETS FOR SECURE DELETION",
-                                color = textColor,
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Bold,
-                                fontFamily = FontFamily.Monospace,
-                                letterSpacing = 0.5.sp
-                            )
-                            if (pickerEnabled && progress == 0f) {
-                                Spacer(modifier = Modifier.height(2.dp))
-                                Text(
-                                    text = "Tap and hold to permanently delete ${selectedFiles.size} selected file(s)",
-                                    color = TextSecondary,
-                                    fontSize = 11.sp,
-                                    fontFamily = FontFamily.SansSerif
-                                )
-                            }
-                        }
-                    }
-                }
+                        .testTag("secure_shred_trigger"),
+                    initialText = if (pickerEnabled) "SLIDE TO PERMANENTLY DELETE" else AppTexts.SELECT_FILES_PROMPT,
+                    executedText = "INITIALIZING...",
+                )
                 Spacer(modifier = Modifier.height(24.dp))
             }
         }
@@ -1494,7 +1939,7 @@ fun FileShredderTab(
 }
 
 @Composable
-fun TextWiperTab(viewModel: ShredderViewModel) {
+fun TextWiperTab(viewModel: ShredderViewModel, isSystemBusy: Boolean = false) {
     val notesInput by viewModel.notesInput.collectAsStateWithLifecycle()
     val isShreddingNote by viewModel.isShreddingNote.collectAsStateWithLifecycle()
     val scrambledText by viewModel.scrambledNotesText.collectAsStateWithLifecycle()
@@ -1507,7 +1952,7 @@ fun TextWiperTab(viewModel: ShredderViewModel) {
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(scrollState)
-            .padding(16.dp),
+            .padding(vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         Card(
@@ -1530,7 +1975,7 @@ fun TextWiperTab(viewModel: ShredderViewModel) {
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    "Sensitive text you copy often stays on your phone's clipboard until something else replaces it. Paste it here and this tool removes it from the app and clears your clipboard, so it isn't left waiting for the next app to read.\n\nGood things to clear here:\n• Passwords or secret PIN codes\n• Bank account numbers or card details\n• One-time codes (OTP) and private snippets you just copied",
+                    AppTexts.TEXT_WIPER_EXPLANATION,
                     color = TextSecondary,
                     fontSize = 12.sp,
                     lineHeight = 16.sp
@@ -1546,7 +1991,7 @@ fun TextWiperTab(viewModel: ShredderViewModel) {
                     viewModel.updateNotesInput(it)
                 }
             },
-            enabled = !isShreddingNote,
+            enabled = !isShreddingNote && !isSystemBusy,
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(min = 180.dp, max = 320.dp)
@@ -1557,7 +2002,7 @@ fun TextWiperTab(viewModel: ShredderViewModel) {
             ),
             placeholder = {
                 Text(
-                    "Paste sensitive text you just copied (e.g. passwords, bank details, OTP codes) to clear it from the app and your clipboard...",
+                    AppTexts.TEXT_WIPER_PLACEHOLDER,
                     color = TextSecondary,
                     fontSize = 12.sp
                 )
@@ -1572,63 +2017,18 @@ fun TextWiperTab(viewModel: ShredderViewModel) {
             shape = RoundedCornerShape(8.dp)
         )
 
-        val buttonEnabled = notesInput.isNotEmpty() && !isShreddingNote && !progressState.isShredding
-        HoldToConfirmButton(
+        val buttonEnabled = notesInput.isNotEmpty() && !isShreddingNote && !progressState.isShredding && !isSystemBusy
+        SwipeToExecuteButton(
             enabled = buttonEnabled,
-            onConfirmed = {
+            onExecuted = {
                 viewModel.shredNotes()
             },
             modifier = Modifier
                 .fillMaxWidth()
-                .testTag("shred_notes_button")
-        ) { progress ->
-            val buttonColor = if (buttonEnabled) LaserRed else SlateBorder
-            val textColor = if (buttonEnabled) TextPrimary else TextSecondary
-
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(48.dp)
-                    .background(
-                        color = if (progress > 0f) LaserRed.copy(alpha = 0.25f * progress) else CharcoalSurface,
-                        shape = RoundedCornerShape(12.dp)
-                    )
-                    .border(
-                        width = 1.dp,
-                        color = if (progress > 0f) LaserRed else buttonColor,
-                        shape = RoundedCornerShape(12.dp)
-                    )
-                    .clip(RoundedCornerShape(12.dp)),
-                contentAlignment = Alignment.Center
-            ) {
-                if (progress > 0f && buttonEnabled) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxHeight()
-                            .fillMaxWidth(progress)
-                            .background(LaserRed.copy(alpha = 0.4f))
-                            .align(Alignment.CenterStart)
-                    )
-                }
-
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = Icons.Default.Refresh,
-                        contentDescription = null,
-                        tint = textColor,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = if (progress > 0f) "DELETING: ${(progress * 100).toInt()}%" else if (buttonEnabled) "HOLD TO PERMANENTLY DELETE" else "ENTER TEXT TO DELETE",
-                        color = textColor,
-                        fontWeight = FontWeight.Bold,
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 12.sp
-                    )
-                }
-            }
-        }
+                .testTag("shred_notes_button"),
+            initialText = if (buttonEnabled) "SLIDE TO PERMANENTLY DELETE" else "ENTER TEXT TO DELETE",
+            executedText = "DELETING..."
+        )
 
         if (wipedLogs.isNotEmpty()) {
             Spacer(modifier = Modifier.height(16.dp))
@@ -1667,16 +2067,24 @@ fun TextWiperTab(viewModel: ShredderViewModel) {
 fun ShredHistoryTab(
     historyLog: List<com.example.data.ShredHistory>,
     onClearAll: () -> Unit,
-    viewModel: ShredderViewModel
+    viewModel: ShredderViewModel,
+    isSystemBusy: Boolean = false
 ) {
     var showClearDialog by remember { mutableStateOf(false) }
+    val listState = rememberLazyListState()
+
+    LaunchedEffect(historyLog.size) {
+        if (historyLog.isNotEmpty()) {
+            listState.animateScrollToItem(0)
+        }
+    }
 
     if (showClearDialog) {
         CyberConfirmDialog(
             title = "CLEAR HISTORY",
             message = "This will permanently erase all wipe records. This action cannot be undone.",
             confirmText = "CONFIRM AND EXECUTE",
-            cancelText = "ABORT PROTOCOL",
+            cancelText = AppTexts.ABORT_ACTION,
             onConfirm = {
                 onClearAll()
                 showClearDialog = false
@@ -1688,7 +2096,7 @@ fun ShredHistoryTab(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(16.dp),
+            .padding(vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Row(
@@ -1707,12 +2115,12 @@ fun ShredHistoryTab(
             if (historyLog.isNotEmpty()) {
                 Text(
                     text = "CLEAR ALL LOGS",
-                    color = LaserRed,
+                    color = if (isSystemBusy) LaserRed.copy(alpha = 0.5f) else LaserRed,
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Bold,
                     fontFamily = FontFamily.Monospace,
                     modifier = Modifier
-                        .clickable { showClearDialog = true }
+                        .clickable(enabled = !isSystemBusy) { showClearDialog = true }
                         .padding(8.dp)
                         .testTag("clear_history_log_button")
                 )
@@ -1750,6 +2158,7 @@ fun ShredHistoryTab(
             }
         } else {
             LazyColumn(
+                state = listState,
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1.0f),
@@ -1792,7 +2201,7 @@ fun ShredHistoryTab(
                                         .padding(horizontal = 4.dp, vertical = 2.dp)
                                 ) {
                                     Text(
-                                        text = "${log.algorithm} (${log.passes}P)",
+                                        text = "${log.algorithm} (SECURE)",
                                         color = NeonGreen,
                                         fontSize = 8.sp,
                                         fontWeight = FontWeight.Bold,
@@ -1869,7 +2278,7 @@ fun ScannedFileListCard(
                             .size(60.dp)
                             .background(Color.Black, RoundedCornerShape(4.dp))
                             .clip(RoundedCornerShape(4.dp))
-                            .clickable { onImageClick() }
+                            .clickable(enabled = !isProcessRunning) { onImageClick() }
                     ) {
                         AsyncImage(
                             model = uri,
@@ -1910,7 +2319,7 @@ fun ScannedFileListCard(
                  AsyncImage(
                      model = uri,
                      contentDescription = null,
-                     modifier = Modifier.fillMaxWidth().height(160.dp).clip(RoundedCornerShape(8.dp)).clickable { onImageClick() },
+                     modifier = Modifier.fillMaxWidth().height(160.dp).clip(RoundedCornerShape(8.dp)).clickable(enabled = !isProcessRunning) { onImageClick() },
                      contentScale = ContentScale.Crop
                  )
             }
@@ -1949,7 +2358,7 @@ fun ScannedFileGridCard(
                 AsyncImage(
                     model = uri,
                     contentDescription = null,
-                    modifier = Modifier.fillMaxSize().clickable { onImageClick() },
+                    modifier = Modifier.fillMaxSize().clickable(enabled = !isProcessRunning) { onImageClick() },
                     contentScale = ContentScale.Crop
                 )
                 Box(
@@ -1984,17 +2393,70 @@ fun ScannedFileGridCard(
 @Composable
 fun AlgorithmsTab() {
     val itemsGuide = listOf(
-        GuideItem("How does it work?", "When you delete a file normally, only its entry is removed and the data stays on disk until something overwrites it — that's why recovery apps can bring it back. We overwrite the file's data with 35 passes first, then delete it, so normal recovery tools find only noise."),
-        GuideItem("Is it safe?", "Yes — the file is securely overwritten and removed from your phone. It cannot be undone, so double-check before you shred."),
-        GuideItem("Can my files still be recovered?", "Not by ordinary recovery apps or services. Be aware that phone flash storage spreads writes across cells (wear-leveling), so no app can mathematically guarantee 100% erasure. For an absolute guarantee, also run Deep Wipe (free-space overwrite) or do a factory reset, which erases the encryption key.")
+        GuideItem(AppTexts.GUIDE_Q_HOW_IT_WORKS, AppTexts.GUIDE_A_HOW_IT_WORKS),
+        GuideItem(AppTexts.GUIDE_Q_IS_IT_SAFE, AppTexts.GUIDE_A_IS_IT_SAFE),
+        GuideItem(AppTexts.GUIDE_Q_CAN_FILES_RECOVER, AppTexts.GUIDE_A_CAN_FILES_RECOVER)
     )
 
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .padding(16.dp),
+            .padding(vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
+        item {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 12.dp),
+                colors = CardDefaults.cardColors(containerColor = CharcoalSurface),
+                border = BorderStroke(1.dp, SlateBorder),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(20.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    androidx.compose.foundation.Image(
+                        painter = androidx.compose.ui.res.painterResource(id = R.drawable.ic_logo_shield),
+                        contentDescription = "Traces Wiper Premium Logo",
+                        contentScale = androidx.compose.ui.layout.ContentScale.Fit,
+                        modifier = Modifier
+                            .size(160.dp)
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = "TRACES WIPER PRO",
+                        color = TextPrimary,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace,
+                        letterSpacing = 1.sp
+                    )
+                    Text(
+                        text = "VERSION 1.0.0 • 100% OFFLINE SECURED",
+                        color = NeonGreen,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "This premium engine utilizes our specialized deleting process to thoroughly neutralize unallocated memory fragments.",
+                        color = TextSecondary,
+                        fontSize = 11.sp,
+                        textAlign = TextAlign.Center,
+                        lineHeight = 15.sp,
+                        modifier = Modifier.padding(horizontal = 8.dp)
+                    )
+                }
+            }
+        }
+
         item {
             Text(
                 "HOW PERMANENT DELETE WORKS",
@@ -2048,64 +2510,124 @@ fun formatBytes(bytes: Long): String {
 }
 
 @Composable
-fun HoldToConfirmButton(
+fun SwipeToExecuteButton(
     enabled: Boolean,
-    onConfirmed: () -> Unit,
+    onExecuted: () -> Unit,
     modifier: Modifier = Modifier,
-    holdDurationMs: Long = 1800L,
-    content: @Composable (progress: Float) -> Unit
+    initialText: String = "SLIDE TO EXECUTE",
+    executedText: String = "EXECUTING...",
+    buttonColor: Color = LaserRed,
+    textColor: Color = TextPrimary,
+    disabledColor: Color = SlateBorder
 ) {
-    var isPressing by remember { mutableStateOf(false) }
-    var progress by remember { mutableStateOf(0f) }
+    var swipeOffset by remember { mutableStateOf(0f) }
+    var isExecuted by remember { mutableStateOf(false) }
+    val density = LocalDensity.current
 
-    LaunchedEffect(isPressing) {
-        if (isPressing) {
-            val startTime = System.currentTimeMillis()
-            while (isPressing && progress < 1f) {
-                delay(16)
-                val elapsed = System.currentTimeMillis() - startTime
-                progress = (elapsed.toFloat() / holdDurationMs).coerceAtMost(1f)
-            }
-            if (progress >= 1f) {
-                onConfirmed()
-                isPressing = false
-                progress = 0f
-            }
-        } else {
-            while (progress > 0f) {
-                delay(12)
-                progress = (progress - 0.08f).coerceAtLeast(0f)
-            }
+    // We get actual width to bound the drag
+    var componentWidthPx by remember { mutableStateOf(0f) }
+    val thumbSizeDp = 44.dp
+    val thumbSizePx = with(density) { thumbSizeDp.toPx() }
+
+    val animatedOffset by animateFloatAsState(
+        targetValue = swipeOffset,
+        animationSpec = tween(durationMillis = 300)
+    )
+
+    LaunchedEffect(isExecuted) {
+        if (isExecuted) {
+            onExecuted()
+            delay(1000)
+            isExecuted = false
+            swipeOffset = 0f
         }
     }
 
     Box(
         modifier = modifier
-            .pointerInput(enabled) {
-                if (!enabled) return@pointerInput
-                detectTapGestures(
-                    onPress = {
-                        isPressing = true
-                        try {
-                            awaitRelease()
-                        } finally {
-                            isPressing = false
-                        }
-                    }
-                )
+            .fillMaxWidth()
+            .height(52.dp)
+            .background(if (enabled) CharcoalSurface else CharcoalSurface.copy(alpha=0.5f), RoundedCornerShape(26.dp))
+            .border(1.dp, if (enabled) buttonColor else disabledColor, RoundedCornerShape(26.dp))
+            .clip(RoundedCornerShape(26.dp))
+            .onGloballyPositioned { coordinates ->
+                componentWidthPx = coordinates.size.width.toFloat()
             },
-        contentAlignment = Alignment.Center
+        contentAlignment = Alignment.CenterStart
     ) {
-        content(progress)
+        val maxSwipePx = if (componentWidthPx > thumbSizePx) componentWidthPx - thumbSizePx - with(density) { 8.dp.toPx() } else 0f
+        val progress = if (maxSwipePx > 0f) (swipeOffset / maxSwipePx).coerceIn(0f, 1f) else 0f
+
+        if (progress > 0f && enabled) {
+            Box(
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .fillMaxWidth(progress)
+                    .background(buttonColor.copy(alpha = 0.4f))
+                    .align(Alignment.CenterStart)
+            )
+        }
+
+        // Text behind
+        Text(
+            text = if (isExecuted) executedText else initialText,
+            color = if (enabled) textColor else TextSecondary,
+            modifier = Modifier.align(Alignment.CenterOffset(progress)),
+            fontFamily = FontFamily.Monospace,
+            fontWeight = FontWeight.Bold,
+            fontSize = 13.sp
+        )
+
+        // Draggable thumb
+        Box(
+            modifier = Modifier
+                .offset { IntOffset(animatedOffset.roundToInt(), 0) }
+                .padding(4.dp)
+                .size(thumbSizeDp)
+                .background(if (enabled) buttonColor else disabledColor, CircleShape)
+                .pointerInput(enabled, maxSwipePx) {
+                    if (!enabled || maxSwipePx == 0f) return@pointerInput
+                    detectHorizontalDragGestures(
+                        onDragEnd = {
+                            if (swipeOffset > maxSwipePx * 0.8f) {
+                                swipeOffset = maxSwipePx
+                                isExecuted = true
+                            } else {
+                                swipeOffset = 0f
+                            }
+                        },
+                        onDragCancel = {
+                            swipeOffset = 0f
+                        },
+                        onHorizontalDrag = { change, dragAmount ->
+                            change.consume()
+                            if (!isExecuted) {
+                                swipeOffset = (swipeOffset + dragAmount).coerceIn(0f, maxSwipePx)
+                            }
+                        }
+                    )
+                },
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                contentDescription = null,
+                tint = Color.White
+            )
+        }
     }
+}
+
+fun Alignment.Companion.CenterOffset(progress: Float): Alignment {
+    return androidx.compose.ui.BiasAlignment(horizontalBias = 0f, verticalBias = 0f)
 }
 
 @Composable
 fun CyberConfirmDialog(
     title: String,
     message: String,
-    confirmText: String = "CONFIRM AND EXECUTE",
-    cancelText: String = "ABORT PROTOCOL",
+    confirmText: String = "CONFIRM",
+    cancelText: String = AppTexts.ABORT_ACTION,
     onConfirm: () -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -2179,9 +2701,9 @@ fun CyberConfirmDialog(
 }
 
 @Composable
-fun DeepWipeTab(viewModel: ShredderViewModel) {
+fun DeepWipeTab(viewModel: ShredderViewModel, isSystemBusy: Boolean = false) {
     val deepWipeViewModel: com.example.wipe.DeepWipeViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
-    com.example.wipe.DeepWipeScreen(deepWipeViewModel)
+    com.example.wipe.DeepWipeScreen(deepWipeViewModel, isSystemBusy = isSystemBusy)
 }
 
 @Composable
@@ -2278,7 +2800,7 @@ fun PermissionBlockedScreen(
             Spacer(modifier = Modifier.height(16.dp))
 
             Text(
-                text = "To securely overwrite, truncate, and physically destroy selected files beyond recovery, the Dig-Deep-Delete engine requires higher direct filesystem access.",
+                text = "To effectively eliminate selected files beyond recovery, the Dig-Deep-Delete engine requires higher direct filesystem access.",
                 color = TextPrimary,
                 fontWeight = FontWeight.Medium,
                 fontSize = 13.sp,

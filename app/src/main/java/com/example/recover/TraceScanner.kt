@@ -82,10 +82,44 @@ class TraceScanner(private val context: Context) {
         // orphaned previews there are now found via the .thumbnails / .thumbdata filesystem walk.
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) scanOrphanedThumbnails(fromMillis, toMillis, out)
         onProgress(out.size)
+        
+        // Collect currently active (non-trashed) media files and IDs from MediaStore
+        val activePaths = HashSet<String>()
+        val activeIds = HashSet<Long>()
+        runCatching {
+            val resolver = context.contentResolver
+            val collection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL)
+            } else {
+                MediaStore.Files.getContentUri("external")
+            }
+            val projection = arrayOf(
+                MediaStore.Files.FileColumns._ID,
+                MediaStore.Files.FileColumns.DATA
+            )
+            val selection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                "is_trashed = 0"
+            } else {
+                null
+            }
+            resolver.query(collection, projection, selection, null, null)?.use { c ->
+                val idCol = c.getColumnIndexOrThrow(MediaStore.Files.FileColumns._ID)
+                val dataCol = c.getColumnIndexOrThrow(MediaStore.Files.FileColumns.DATA)
+                while (c.moveToNext()) {
+                    val id = c.getLong(idCol)
+                    activeIds.add(id)
+                    val data = if (!c.isNull(dataCol)) c.getString(dataCol) else null
+                    if (data != null) {
+                        activePaths.add(data.lowercase())
+                    }
+                }
+            }
+        }
+
         if (includeFilesystem && hasAllFilesAccess()) {
             for (sd in candidateDirs()) {
                 ensureActive()
-                walk(sd.dir, sd.label, sd.collectAll, fromMillis, toMillis, out, 0)
+                walk(sd.dir, sd.label, sd.collectAll, fromMillis, toMillis, out, 0, activePaths, activeIds)
                 onProgress(out.size)
             }
         }
@@ -233,12 +267,33 @@ class TraceScanner(private val context: Context) {
 
     private fun walk(
         dir: File, label: String, collectAll: Boolean, from: Long, to: Long,
-        out: MutableMap<String, RecoverableTrace>, depth: Int
+        out: MutableMap<String, RecoverableTrace>, depth: Int,
+        activePaths: HashSet<String>, activeIds: HashSet<Long>
     ) {
         if (!dir.exists() || !dir.isDirectory || depth > 6) return
         val children = dir.listFiles() ?: return
         for (f in children) {
-            if (f.isDirectory) { walk(f, label, collectAll, from, to, out, depth + 1); continue }
+            if (f.isDirectory) {
+                walk(f, label, collectAll, from, to, out, depth + 1, activePaths, activeIds)
+                continue
+            }
+            
+            // Skip the file completely if it is registered as an active, non-deleted media file in the system
+            val filePathLower = f.absolutePath.lowercase()
+            if (activePaths.contains(filePathLower)) {
+                continue
+            }
+
+            // Skip files in thumbnail caches if they correspond to images/videos that still actively exist
+            val name = f.name
+            val lowerPath = f.absolutePath.lowercase()
+            if (lowerPath.contains("/.thumbnails") || name.startsWith(".thumbdata")) {
+                val numbers = Regex("\\d+").findAll(name).mapNotNull { it.value.toLongOrNull() }.toList()
+                if (numbers.any { activeIds.contains(it) }) {
+                    continue // Original media file is still active, so this is not a deleted trace
+                }
+            }
+
             val (source, isRemnant) = classify(f, label)
             // In media roots we only collect hidden deleted-remnants, never live files.
             if (!collectAll && !isRemnant) continue

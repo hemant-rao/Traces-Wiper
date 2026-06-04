@@ -11,6 +11,7 @@ import android.provider.OpenableColumns
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.AppDatabase
+import com.example.data.AppTexts
 import com.example.data.ShredHistory
 import com.example.data.ShredRepository
 import kotlinx.coroutines.CompletableDeferred
@@ -27,7 +28,9 @@ import java.io.File
 import java.io.FileOutputStream
 import java.security.SecureRandom
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
+import android.widget.Toast
 
 sealed class PatternType(val description: String) {
     object ZeroField : PatternType("0x00 Zero-fill (Fast Wipe)")
@@ -73,7 +76,7 @@ sealed class ShredAlgorithm(
         "Permanent Delete Mode",
         35,
         "Maximum Security",
-        "Overwrites your file 35 times before deleting it, so normal recovery tools can't bring the data back."
+        AppTexts.SHRED_DESCRIPTION_NOTE
     ) {
         override fun getPassPatterns(fileSize: Long): List<PatternType> {
             val list = mutableListOf<PatternType>()
@@ -207,6 +210,21 @@ class ShredderViewModel(application: Application) : AndroidViewModel(application
     private val _wipedTextLogs = MutableStateFlow<List<String>>(emptyList())
     val wipedTextLogs = _wipedTextLogs.asStateFlow()
 
+    // Warning Banner Suppressions
+    private val _showWarningNote = MutableStateFlow(true)
+    val showWarningNote: StateFlow<Boolean> = _showWarningNote.asStateFlow()
+
+    private val _showStorageWarningNote = MutableStateFlow(true)
+    val showStorageWarningNote: StateFlow<Boolean> = _showStorageWarningNote.asStateFlow()
+
+    fun dismissWarningNote() {
+        _showWarningNote.value = false
+    }
+
+    fun dismissStorageWarningNote() {
+        _showStorageWarningNote.value = false
+    }
+
     fun updateSelectedAlgorithm(algo: ShredAlgorithm) {
         _selectedAlgorithm.value = algo
     }
@@ -278,7 +296,7 @@ class ShredderViewModel(application: Application) : AndroidViewModel(application
         _progressState.value = ShredProgressState(
             isShredding = true,
             totalFilesCount = filesToShred.size,
-            logs = listOf("🔥 Starting Permanent Delete process...", "Selected mode: ${algo.name} (${algo.totalPasses} Passes)")
+            logs = listOf("🔥 Starting Permanent Delete process...", "Selected mode: ${algo.name} (Eradicating trace patterns...)")
         )
 
         viewModelScope.launch(Dispatchers.IO) {
@@ -412,6 +430,10 @@ class ShredderViewModel(application: Application) : AndroidViewModel(application
                     totalSuccessCount = successCount,
                     totalBytesWipedInSession = bytesWipedInSession
                 )
+                
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(context, "✅ Shredding Session Complete", Toast.LENGTH_SHORT).show()
+                }
 
             } finally {
                 // Clear selection list completely so the list is always cleared when session finishes or aborts.
@@ -857,6 +879,9 @@ class ShredderViewModel(application: Application) : AndroidViewModel(application
                 val clip = if (clipboardCleared) " Clipboard cleared." else ""
                 listOf("[$timestamp] ✅ Removed ${textToShred.length} characters from the app.$clip") + logs
             }
+            withContext(Dispatchers.Main) {
+                Toast.makeText(getApplication(), "✅ Notes Deleted Successfully", Toast.LENGTH_SHORT).show()
+            }
             } finally {
                 // Always release the flag so cancellation/throw never pins the overlay.
                 _notesInput.value = ""
@@ -870,6 +895,9 @@ class ShredderViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 repository.clearAll()
+                withContext(Dispatchers.Main) {
+                    android.widget.Toast.makeText(getApplication(), "✅ History Cleared", android.widget.Toast.LENGTH_SHORT).show()
+                }
             } catch (e: Exception) {
                 e.printStackTrace()
             }
@@ -1169,7 +1197,7 @@ class ShredderViewModel(application: Application) : AndroidViewModel(application
             logs = listOf(
                 "🔥 Starting Deep Wipe process...",
                 "Targeting ${selectedScanned.size} files found in empty space.",
-                "Active mode: ${algo.name} (${algo.totalPasses} Passes)"
+                "Active mode: ${algo.name} (Eradicating trace patterns...)"
             )
         )
 
@@ -1261,6 +1289,10 @@ class ShredderViewModel(application: Application) : AndroidViewModel(application
                     totalSuccessCount = successCount,
                     totalBytesWipedInSession = bytesWipedInSession
                 )
+                
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(getApplication(), "✅ Traces Wiped Successfully", Toast.LENGTH_SHORT).show()
+                }
 
             } finally {
                 // Remove ONLY the successfully shredded items from the Scanned list so failed

@@ -24,6 +24,8 @@ class DataRecoveryViewModel(app: Application) : AndroidViewModel(app) {
     data class UiState(
         val scanning: Boolean = false,
         val recovering: Boolean = false,
+        val currentRecoveredIndex: Int = 0,
+        val totalRecoverCount: Int = 0,
         val traces: List<RecoverableTrace> = emptyList(),
         val selected: Set<String> = emptySet(),
         val fromMillis: Long = defaultFrom(),
@@ -88,13 +90,22 @@ class DataRecoveryViewModel(app: Application) : AndroidViewModel(app) {
         val chosen = s.traces.filter { it.id in s.selected }
         if (chosen.isEmpty()) return
         viewModelScope.launch {
-            _ui.value = _ui.value.copy(recovering = true)
-            val res = recoverer.recover(chosen)
+            _ui.value = _ui.value.copy(
+                recovering = true,
+                currentRecoveredIndex = 0,
+                totalRecoverCount = chosen.size
+            )
+            val res = recoverer.recover(chosen) { current, total ->
+                _ui.value = _ui.value.copy(
+                    currentRecoveredIndex = current,
+                    totalRecoverCount = total
+                )
+            }
             if (res.needsUserConsent != null) _consentRequest.value = res.needsUserConsent
             val parts = buildList {
-                if (res.recovered > 0) add("Recovered ${res.recovered} file(s) to ${res.outputDir}.")
-                if (res.needsUserConsent != null) add("Confirm the system prompt to restore the rest to your gallery.")
-                if (res.recovered == 0 && res.needsUserConsent == null) add("Nothing could be recovered from the selection.")
+                if (res.recovered > 0) add("Successfully restored ${res.recovered} file(s) to ${res.outputDir}.")
+                if (res.needsUserConsent != null) add("Please approve the system prompt to restore the remaining items back to your Gallery.")
+                if (res.recovered == 0 && res.needsUserConsent == null) add("No files could be recovered from the selected items.")
             }
             _ui.value = _ui.value.copy(recovering = false, message = parts.joinToString(" "))
         }

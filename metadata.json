@@ -1,6 +1,6 @@
 {
-  "name": "cyberWipe",
-  "description": "An elite, cyberpunk-inspired secure data destruction suite for military-grade file sanitization, unallocated sector space sweeping, and secure note scrubbing without trace recovery.",
+  "name": "Traces Wiper - Secure File Shredder",
+  "description": "Wipe leftover traces of deleted files, clean empty storage space, and permanently shred files to defend your personal privacy. Safely clear cached previews, orphan thumbnails, and sensitive documents so they can never be recovered.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

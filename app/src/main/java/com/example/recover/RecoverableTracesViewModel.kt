@@ -19,6 +19,8 @@ class RecoverableTracesViewModel(app: Application) : AndroidViewModel(app) {
     data class UiState(
         val scanning: Boolean = false,
         val wiping: Boolean = false,
+        val currentWipedIndex: Int = 0,
+        val totalWipeCount: Int = 0,
         val traces: List<RecoverableTrace> = emptyList(),
         val selected: Set<String> = emptySet(),
         val fromMillis: Long = defaultFrom(),
@@ -83,14 +85,26 @@ class RecoverableTracesViewModel(app: Application) : AndroidViewModel(app) {
         val chosen = s.traces.filter { it.id in s.selected }
         if (chosen.isEmpty()) return
         viewModelScope.launch {
-            _ui.value = _ui.value.copy(wiping = true)
-            val res = wiper.wipe(chosen)
+            _ui.value = _ui.value.copy(
+                wiping = true,
+                currentWipedIndex = 0,
+                totalWipeCount = chosen.size
+            )
+            val res = wiper.wipe(chosen) { current, total ->
+                _ui.value = _ui.value.copy(
+                    currentWipedIndex = current,
+                    totalWipeCount = total
+                )
+            }
             if (res.needsUserConsent != null) _consentRequest.value = res.needsUserConsent
             _ui.value = _ui.value.copy(
                 wiping = false,
-                message = "Wiped ${res.deleted} item(s)." +
-                    if (res.needsUserConsent != null) " Confirm the system prompt to remove the rest." else ""
+                message = "Successfully wiped ${res.deleted} file remnants permanently." +
+                    if (res.needsUserConsent != null) " Please confirm the system prompt to remove the remaining items." else ""
             )
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                android.widget.Toast.makeText(getApplication(), "✅ Recoverable Traces Wiped", android.widget.Toast.LENGTH_SHORT).show()
+            }
         }
     }
 

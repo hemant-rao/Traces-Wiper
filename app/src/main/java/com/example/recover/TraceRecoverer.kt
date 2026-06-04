@@ -30,7 +30,10 @@ class TraceRecoverer(private val context: Context) {
      *    one system untrash request; launch the returned IntentSender for the user's one-tap
      *    consent, which restores them in place to their original gallery location.
      */
-    suspend fun recover(traces: List<RecoverableTrace>): RecoverResult = withContext(Dispatchers.IO) {
+    suspend fun recover(
+        traces: List<RecoverableTrace>,
+        onProgress: (Int, Int) -> Unit = { _, _ -> }
+    ): RecoverResult = withContext(Dispatchers.IO) {
         var recovered = 0
         val needUntrash = ArrayList<Uri>()
         val resolver = context.contentResolver
@@ -42,7 +45,9 @@ class TraceRecoverer(private val context: Context) {
         var dirReady = false
         val scanPaths = ArrayList<String>()
 
-        for (t in traces) {
+        for (idx in traces.indices) {
+            val t = traces[idx]
+            onProgress(idx + 1, traces.size)
             // 1) Prefer a direct on-disk copy when we can read the bytes ourselves.
             val path = t.filePath
             val srcFile = path?.let { File(it) }

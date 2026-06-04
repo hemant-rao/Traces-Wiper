@@ -25,12 +25,17 @@ class TraceWiper(private val context: Context) {
      * - MediaStore owned by other apps (Android 11+): batched into one system delete
      *   request; launch the returned IntentSender for the user's one-tap consent.
      */
-    suspend fun wipe(traces: List<RecoverableTrace>): WipeResult = withContext(Dispatchers.IO) {
+    suspend fun wipe(
+        traces: List<RecoverableTrace>,
+        onProgress: (Int, Int) -> Unit = { _, _ -> }
+    ): WipeResult = withContext(Dispatchers.IO) {
         var deleted = 0
         val needConsent = ArrayList<Uri>()
         val resolver = context.contentResolver
 
-        for (t in traces) {
+        for (idx in traces.indices) {
+            val t = traces[idx]
+            onProgress(idx + 1, traces.size)
             val uri = t.contentUri
             val path = t.filePath
             if (uri == null && path != null) {

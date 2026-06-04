@@ -25,6 +25,13 @@ class DeepWipeViewModel(app: Application) : AndroidViewModel(app) {
     val state: StateFlow<WipeState> = _state.asStateFlow()
     private var job: Job? = null
 
+    private val _showWarning = MutableStateFlow(true)
+    val showWarning: StateFlow<Boolean> = _showWarning.asStateFlow()
+
+    fun dismissWarning() {
+        _showWarning.value = false
+    }
+
     fun startFreeSpaceWipe() {
         if (job?.isActive == true) return
         val ctx = getApplication<Application>()
@@ -34,11 +41,19 @@ class DeepWipeViewModel(app: Application) : AndroidViewModel(app) {
                 _state.value = WipeState.Running(p.fraction, p.bytesWritten / (1024 * 1024))
             }
             result
-                .onSuccess { _state.value = WipeState.Done(it / (1024 * 1024)) }
+                .onSuccess { 
+                    _state.value = WipeState.Done(it / (1024 * 1024))
+                    android.widget.Toast.makeText(ctx, "✅ Free Space Wipe Complete", android.widget.Toast.LENGTH_SHORT).show()
+                }
                 .onFailure { _state.value = WipeState.Error(it.message ?: "Unknown error") }
         }
         job?.invokeOnCompletion { cause ->
-            if (cause is CancellationException) _state.value = WipeState.Cancelled
+            if (cause is CancellationException) {
+                _state.value = WipeState.Cancelled
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    android.widget.Toast.makeText(getApplication(), "Wipe Cancelled", android.widget.Toast.LENGTH_SHORT).show()
+                }
+            }
         }
     }
 
