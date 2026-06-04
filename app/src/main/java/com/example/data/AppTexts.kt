@@ -50,7 +50,7 @@ object AppTexts {
     const val GUIDE_A_IS_IT_SAFE = "Yes — the file is securely deleted and removed from your phone. It cannot be undone, so double-check before you shred."
 
     const val GUIDE_Q_CAN_FILES_RECOVER = "Can my files still be recovered?"
-    const val GUIDE_A_CAN_FILES_RECOVER = "Not by ordinary recovery apps or services. Be aware that phone flash storage spreads writes across cells (wear-leveling), so no app can mathematically guarantee 100% destruction. For an absolute guarantee, also run Deep Wipe or do a factory reset."
+    const val GUIDE_A_CAN_FILES_RECOVER = "Not by ordinary recovery apps or services. Be aware that phone flash storage spreads writes across cells (wear-leveling), so no app can mathematically ensure 100% destruction. For the highest security confidence, also run Deep Wipe or do a factory reset."
 
     // --- GLOBAL BUTTONS, ALERTS & UI PILLS ---
     const val APP_TAGLINE = "100% OFFLINE • USER PRIVACY SECURED"

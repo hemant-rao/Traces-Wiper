@@ -168,6 +168,7 @@ import com.example.ui.theme.TerminalCyan
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
 import com.example.recover.*
+import com.example.forensics.*
 import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
@@ -263,7 +264,11 @@ fun ShredderAppScreen(
     onRequestStoragePermission: () -> Unit = {}
 ) {
     val context = LocalContext.current
-    var selectedTab by remember { mutableStateOf(0) }
+    var selectedTab by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(0) }
+
+    androidx.activity.compose.BackHandler(enabled = selectedTab != 0) {
+        selectedTab = 0
+    }
 
     val density = LocalDensity.current
     var headerHeightPx by remember { mutableStateOf(0f) }
@@ -306,8 +311,9 @@ fun ShredderAppScreen(
         headerOffsetHeightPx = 0f
     }
     
-    // Three top-level tabs; related tools are grouped into inner sub-tabs within each.
+    // Four top-level tabs; related tools are grouped into inner sub-tabs within each.
     val tabs = listOf(
+        CyberTabItem("Forensics", androidx.compose.material.icons.Icons.Default.Search, "Privacy & Forensic Analysis"),
         CyberTabItem("Shred", Icons.Default.Delete, "Securely destroy data"),
         CyberTabItem("Recover", Icons.Default.Search, "Find & restore deleted data"),
         CyberTabItem("History", Icons.Default.History, "Logs & security standards")
@@ -480,7 +486,7 @@ fun ShredderAppScreen(
             )
         }
 
-        val showStatsHeader = selectedTab == 0
+        val showStatsHeader = selectedTab == 1
 
         // Intermediate sliding frame box with custom collapsing header
         Box(
@@ -518,7 +524,8 @@ fun ShredderAppScreen(
                 label = "TabTransition"
             ) { targetTab ->
                 when (targetTab) {
-                    0 -> ShredHubTab(
+                    0 -> ForensicsHubTab(viewModel = viewModel, isSystemBusy = isAnyProcessRunning)
+                    1 -> ShredHubTab(
                         selectedFiles = selectedFiles,
                         currentAlgo = currentAlgo,
                         progressState = progressState,
@@ -531,8 +538,8 @@ fun ShredderAppScreen(
                         onRequestStoragePermission = onRequestStoragePermission,
                         isSystemBusy = isAnyProcessRunning
                     )
-                    1 -> RecoverHubTab(isSystemBusy = isAnyProcessRunning)
-                    2 -> HistoryAndGuideTab(
+                    2 -> RecoverHubTab(isSystemBusy = isAnyProcessRunning)
+                    3 -> HistoryAndGuideTab(
                         historyLog = historyLog,
                         onClearAll = { viewModel.clearHistory() },
                         viewModel = viewModel,
@@ -913,7 +920,11 @@ fun ShredHubTab(
     onRequestStoragePermission: () -> Unit = {},
     isSystemBusy: Boolean = false
 ) {
-    var innerTab by remember { mutableStateOf(0) }
+    var innerTab by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(0) }
+    
+    androidx.activity.compose.BackHandler(enabled = innerTab != 0) {
+        innerTab = 0
+    }
 
     Column(
         modifier = Modifier
@@ -971,7 +982,11 @@ fun ShredHubTab(
  */
 @Composable
 fun RecoverHubTab(isSystemBusy: Boolean = false) {
-    var innerTab by remember { mutableStateOf(0) }
+    var innerTab by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(0) }
+    
+    androidx.activity.compose.BackHandler(enabled = innerTab != 0) {
+        innerTab = 0
+    }
 
     Column(
         modifier = Modifier
@@ -1024,8 +1039,12 @@ fun HistoryAndGuideTab(
     viewModel: ShredderViewModel,
     isSystemBusy: Boolean = false
 ) {
-    var insideTabSelection by remember { mutableStateOf(0) } // 0 = Shred Logs, 1 = Military Standards
+    var insideTabSelection by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(0) } // 0 = Shred Logs, 1 = Military Standards
     
+    androidx.activity.compose.BackHandler(enabled = insideTabSelection != 0) {
+        insideTabSelection = 0
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -1621,13 +1640,14 @@ fun FileShredderTab(
                                         Button(
                                             onClick = onRequestStoragePermission,
                                             colors = ButtonDefaults.buttonColors(containerColor = ElectricAmber),
-                                            shape = RoundedCornerShape(8.dp),
-                                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                                            shape = RoundedCornerShape(12.dp),
+                                            modifier = Modifier.height(36.dp),
+                                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp)
                                         ) {
                                             Text(
                                                 text = "GRANT DIRECT SECURE STORAGE ACCESS",
                                                 color = Color.Black,
-                                                fontSize = 10.sp,
+                                                fontSize = 11.sp,
                                                 fontWeight = FontWeight.Bold,
                                                 fontFamily = FontFamily.Monospace
                                             )
@@ -1684,24 +1704,22 @@ fun FileShredderTab(
                                 onClick = onPickFiles,
                                 enabled = !isSystemBusy,
                                 colors = ButtonDefaults.buttonColors(containerColor = NeonGreen),
-                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 0.dp),
                                 shape = RoundedCornerShape(12.dp),
-                                modifier = Modifier.testTag("select_files_button")
+                                modifier = Modifier.height(36.dp).testTag("select_files_button")
                             ) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Icon(
                                         imageVector = Icons.Default.Add,
                                         contentDescription = null,
-                                        tint = Color.White,
+                                        tint = CarbonDarkBg,
                                         modifier = Modifier.size(16.dp)
                                     )
                                     Spacer(modifier = Modifier.width(4.dp))
                                     Text(
                                         "Load Files",
-                                        color = Color.White,
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        fontFamily = FontFamily.SansSerif
+                                        color = CarbonDarkBg,
+                                        fontWeight = FontWeight.Bold
                                     )
                                 }
                             }
@@ -2672,12 +2690,12 @@ fun CyberConfirmDialog(
                     onDismiss()
                 },
                 colors = ButtonDefaults.buttonColors(containerColor = LaserRed),
-                shape = RoundedCornerShape(8.dp)
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.height(48.dp)
             ) {
                 Text(
                     text = confirmText,
-                    color = TextPrimary,
-                    fontSize = 11.sp,
+                    color = Color.White,
                     fontWeight = FontWeight.Bold,
                     fontFamily = FontFamily.Monospace
                 )
@@ -2687,13 +2705,14 @@ fun CyberConfirmDialog(
             OutlinedButton(
                 onClick = onDismiss,
                 border = BorderStroke(1.dp, SlateBorder),
-                shape = RoundedCornerShape(8.dp),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.height(48.dp),
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = TextSecondary)
             ) {
                 Text(
                     text = cancelText,
-                    fontSize = 11.sp,
-                    fontFamily = FontFamily.Monospace
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold
                 )
             }
         }
@@ -2812,7 +2831,7 @@ fun PermissionBlockedScreen(
             Spacer(modifier = Modifier.height(12.dp))
 
             Text(
-                text = "Your privacy is 100% guaranteed. All operations happen offline directly on your phone. No data ever leaves your device.",
+                text = "Your privacy is our priority. All operations happen offline directly on your phone. No data ever leaves your device.",
                 color = TextSecondary,
                 fontWeight = FontWeight.Normal,
                 fontSize = 11.sp,

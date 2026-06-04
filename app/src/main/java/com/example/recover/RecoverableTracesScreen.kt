@@ -345,13 +345,12 @@ fun RecoverableTracesScreen(vm: RecoverableTracesViewModel, isSystemBusy: Boolea
                         },
                         enabled = !isSystemBusy,
                         colors = ButtonDefaults.buttonColors(containerColor = LaserRed),
-                        modifier = Modifier.weight(1f),
-                        shape = RoundedCornerShape(8.dp)
+                        modifier = Modifier.weight(1f).height(48.dp),
+                        shape = RoundedCornerShape(12.dp)
                     ) {
                         Text(
                             text = "SCAN STORAGE CHIPS",
                             color = Color.White,
-                            fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
                             fontFamily = FontFamily.Monospace
                         )
@@ -372,11 +371,11 @@ fun RecoverableTracesScreen(vm: RecoverableTracesViewModel, isSystemBusy: Boolea
                             enabled = !isSystemBusy,
                             border = BorderStroke(1.dp, ElectricAmber.copy(alpha = 0.5f)),
                             colors = ButtonDefaults.outlinedButtonColors(contentColor = ElectricAmber),
-                            shape = RoundedCornerShape(8.dp)
+                            modifier = Modifier.height(48.dp),
+                            shape = RoundedCornerShape(12.dp)
                         ) {
                             Text(
                                 text = "ALLOW ALL-FILES",
-                                fontSize = 11.sp,
                                 fontFamily = FontFamily.Monospace,
                                 fontWeight = FontWeight.Bold
                             )
@@ -620,15 +619,14 @@ fun RecoverableTracesScreen(vm: RecoverableTracesViewModel, isSystemBusy: Boolea
                     onClick = { showConfirm = true },
                     enabled = ui.selectedCount > 0 && !ui.wiping && !isSystemBusy,
                     colors = ButtonDefaults.buttonColors(containerColor = LaserRed),
-                    shape = RoundedCornerShape(10.dp),
+                    shape = RoundedCornerShape(12.dp),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(top = 16.dp, bottom = 24.dp)
+                        .height(48.dp)
                 ) {
                     Text(
                         text = if (ui.wiping) "SHREDDING PERSISTENT CELL TRACES..." else "WIPE CHOSEN EVIDENCE FOREVER (${ui.selectedCount})",
                         color = Color.White,
-                        fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
                         fontFamily = FontFamily.Monospace
                     )
@@ -678,12 +676,12 @@ fun RecoverableTracesScreen(vm: RecoverableTracesViewModel, isSystemBusy: Boolea
                         vm.wipeSelected()
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = LaserRed),
-                    shape = RoundedCornerShape(8.dp)
+                    modifier = Modifier.height(48.dp),
+                    shape = RoundedCornerShape(12.dp)
                 ) {
                     Text(
                         text = "DESTROY EVIDENCE",
-                        color = TextPrimary,
-                        fontSize = 11.sp,
+                        color = Color.White,
                         fontWeight = FontWeight.Bold,
                         fontFamily = FontFamily.Monospace
                     )
@@ -693,13 +691,14 @@ fun RecoverableTracesScreen(vm: RecoverableTracesViewModel, isSystemBusy: Boolea
                 OutlinedButton(
                     onClick = { showConfirm = false },
                     border = BorderStroke(1.dp, SlateBorder),
-                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.height(48.dp),
+                    shape = RoundedCornerShape(12.dp),
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = TextSecondary)
                 ) {
                     Text(
                         text = AppTexts.ABORT_ACTION,
-                        fontSize = 11.sp,
-                        fontFamily = FontFamily.Monospace
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Bold
                     )
                 }
             }

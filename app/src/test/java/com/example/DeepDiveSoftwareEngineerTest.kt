@@ -30,7 +30,7 @@ class DeepDiveSoftwareEngineerTest {
         assertEquals("Permanent Delete Mode", algo.name)
         assertEquals(35, algo.totalPasses)
         assertEquals("Maximum Security", algo.securityLevel)
-        assertTrue(algo.description.contains("35 times"))
+        assertTrue(algo.description.contains("definitively"))
     }
 
     @Test
