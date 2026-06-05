@@ -6,8 +6,18 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateOf
 
 // Dynamic Theme State for Professional Theme Controls
+enum class ThemeMode { SYSTEM, DARK, LIGHT }
+
 object ThemeState {
-    var isDarkTheme by mutableStateOf(true) // Defaults to Dark Theme but toggles seamlessly
+    var themeMode by mutableStateOf(ThemeMode.SYSTEM)
+    var systemIsDark by mutableStateOf(true)
+
+    val isDarkTheme: Boolean
+        get() = when (themeMode) {
+            ThemeMode.SYSTEM -> systemIsDark
+            ThemeMode.DARK -> true
+            ThemeMode.LIGHT -> false
+        }
 }
 
 // Professional Palette - Deep Obsidian Slate & Executive Royal Indigo/Emerald (Offline Cyber-Security Vibes)

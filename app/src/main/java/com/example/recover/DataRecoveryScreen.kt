@@ -346,12 +346,13 @@ fun DataRecoveryScreen(vm: DataRecoveryViewModel, isSystemBusy: Boolean = false)
                         onClick = { permLauncher.launch(neededReadPermissionsForRecovery()) },
                         enabled = !isSystemBusy,
                         colors = ButtonDefaults.buttonColors(containerColor = NeonGreen),
-                        modifier = Modifier.weight(1f).height(48.dp),
+                        modifier = Modifier.weight(1f).height(38.dp),
                         shape = RoundedCornerShape(12.dp)
                     ) {
                         Text(
                             text = "START SCAN PROCESS",
                             color = CarbonDarkBg,
+                            fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
                             fontFamily = FontFamily.Monospace
                         )
@@ -372,11 +373,12 @@ fun DataRecoveryScreen(vm: DataRecoveryViewModel, isSystemBusy: Boolean = false)
                             enabled = !isSystemBusy,
                             border = BorderStroke(1.dp, ElectricAmber.copy(alpha = 0.5f)),
                             colors = ButtonDefaults.outlinedButtonColors(contentColor = ElectricAmber),
-                            modifier = Modifier.height(48.dp),
+                            modifier = Modifier.height(38.dp),
                             shape = RoundedCornerShape(12.dp)
                         ) {
                             Text(
                                 text = "ALLOW ALL-FILES",
+                                fontSize = 11.sp,
                                 fontFamily = FontFamily.Monospace,
                                 fontWeight = FontWeight.Bold
                             )
@@ -623,11 +625,12 @@ fun DataRecoveryScreen(vm: DataRecoveryViewModel, isSystemBusy: Boolean = false)
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(48.dp)
+                        .height(38.dp)
                 ) {
                     Text(
                         text = if (ui.recovering) "RECOVERING SENSITIVE DATA..." else "RECOVER SELECTED SYSTEM TRACES (${ui.selectedCount})",
                         color = CarbonDarkBg,
+                        fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
                         fontFamily = FontFamily.Monospace
                     )
@@ -677,12 +680,13 @@ fun DataRecoveryScreen(vm: DataRecoveryViewModel, isSystemBusy: Boolean = false)
                         vm.recoverSelected()
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = NeonGreen),
-                    modifier = Modifier.height(48.dp),
+                    modifier = Modifier.height(38.dp),
                     shape = RoundedCornerShape(12.dp)
                 ) {
                     Text(
                         text = "EXECUTE RESTORATION",
                         color = CarbonDarkBg,
+                        fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
                         fontFamily = FontFamily.Monospace
                     )
@@ -692,12 +696,13 @@ fun DataRecoveryScreen(vm: DataRecoveryViewModel, isSystemBusy: Boolean = false)
                 OutlinedButton(
                     onClick = { showConfirm = false },
                     border = BorderStroke(1.dp, SlateBorder),
-                    modifier = Modifier.height(48.dp),
+                    modifier = Modifier.height(38.dp),
                     shape = RoundedCornerShape(12.dp),
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = TextSecondary)
                 ) {
                     Text(
                         text = AppTexts.ABORT_ACTION,
+                        fontSize = 11.sp,
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.Bold
                     )

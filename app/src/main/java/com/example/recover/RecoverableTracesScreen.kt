@@ -345,12 +345,13 @@ fun RecoverableTracesScreen(vm: RecoverableTracesViewModel, isSystemBusy: Boolea
                         },
                         enabled = !isSystemBusy,
                         colors = ButtonDefaults.buttonColors(containerColor = LaserRed),
-                        modifier = Modifier.weight(1f).height(48.dp),
+                        modifier = Modifier.weight(1f).height(38.dp),
                         shape = RoundedCornerShape(12.dp)
                     ) {
                         Text(
                             text = "SCAN STORAGE CHIPS",
                             color = Color.White,
+                            fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
                             fontFamily = FontFamily.Monospace
                         )
@@ -371,11 +372,12 @@ fun RecoverableTracesScreen(vm: RecoverableTracesViewModel, isSystemBusy: Boolea
                             enabled = !isSystemBusy,
                             border = BorderStroke(1.dp, ElectricAmber.copy(alpha = 0.5f)),
                             colors = ButtonDefaults.outlinedButtonColors(contentColor = ElectricAmber),
-                            modifier = Modifier.height(48.dp),
+                            modifier = Modifier.height(38.dp),
                             shape = RoundedCornerShape(12.dp)
                         ) {
                             Text(
                                 text = "ALLOW ALL-FILES",
+                                fontSize = 11.sp,
                                 fontFamily = FontFamily.Monospace,
                                 fontWeight = FontWeight.Bold
                             )
@@ -622,11 +624,12 @@ fun RecoverableTracesScreen(vm: RecoverableTracesViewModel, isSystemBusy: Boolea
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(48.dp)
+                        .height(38.dp)
                 ) {
                     Text(
                         text = if (ui.wiping) "SHREDDING PERSISTENT CELL TRACES..." else "WIPE CHOSEN EVIDENCE FOREVER (${ui.selectedCount})",
                         color = Color.White,
+                        fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
                         fontFamily = FontFamily.Monospace
                     )
@@ -676,12 +679,13 @@ fun RecoverableTracesScreen(vm: RecoverableTracesViewModel, isSystemBusy: Boolea
                         vm.wipeSelected()
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = LaserRed),
-                    modifier = Modifier.height(48.dp),
+                    modifier = Modifier.height(38.dp),
                     shape = RoundedCornerShape(12.dp)
                 ) {
                     Text(
                         text = "DESTROY EVIDENCE",
                         color = Color.White,
+                        fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
                         fontFamily = FontFamily.Monospace
                     )
@@ -691,12 +695,13 @@ fun RecoverableTracesScreen(vm: RecoverableTracesViewModel, isSystemBusy: Boolea
                 OutlinedButton(
                     onClick = { showConfirm = false },
                     border = BorderStroke(1.dp, SlateBorder),
-                    modifier = Modifier.height(48.dp),
+                    modifier = Modifier.height(38.dp),
                     shape = RoundedCornerShape(12.dp),
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = TextSecondary)
                 ) {
                     Text(
                         text = AppTexts.ABORT_ACTION,
+                        fontSize = 11.sp,
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.Bold
                     )

@@ -58,7 +58,7 @@ fun ForensicsHubTab(
             .then(if (showTracesUI) Modifier else Modifier.verticalScroll(rememberScrollState()))
             .padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         
         // Header
@@ -117,6 +117,7 @@ fun ForensicsHubTab(
                     } else {
                         ForensicTracesView(
                             report = filteredReport,
+                            isSystemBusy = isSystemBusy,
                             modifier = Modifier.weight(1f),
                             onBack = { showTracesFilter = null },
                             onClearTraces = { traces ->
@@ -137,6 +138,7 @@ fun ForensicsHubTab(
                 } else {
                     ForensicDashboard(
                         report = state.report,
+                        isSystemBusy = isSystemBusy,
                         onShowTraces = { filter -> showTracesFilter = filter }
                     )
                     Spacer(modifier = Modifier.height(16.dp))
@@ -231,7 +233,24 @@ fun ForensicScanningCard(state: ScanState.Scanning) {
 }
 
 @Composable
-fun ForensicTracesView(report: ForensicReport, modifier: Modifier = Modifier, onBack: () -> Unit, onClearTraces: (List<com.example.recover.RecoverableTrace>) -> Unit) {
+fun ForensicTracesView(report: ForensicReport, isSystemBusy: Boolean, modifier: Modifier = Modifier, onBack: () -> Unit, onClearTraces: (List<com.example.recover.RecoverableTrace>) -> Unit) {
+    var showConfirmDialog by remember { mutableStateOf(false) }
+
+    if (showConfirmDialog) {
+        com.example.CyberConfirmDialog(
+            title = "WIPE TRACES",
+            message = "You are about to securely wipe traces. This will permanently delete these files from your device. This action cannot be undone.",
+            confirmText = "ACKNOWLEDGE AND WIPE",
+            cancelText = "CANCEL",
+            requireConfirmationWord = "WIPE",
+            onConfirm = {
+                onClearTraces(report.traces.take(100))
+                showConfirmDialog = false
+            },
+            onDismiss = { showConfirmDialog = false }
+        )
+    }
+
     Column(
         modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -243,20 +262,22 @@ fun ForensicTracesView(report: ForensicReport, modifier: Modifier = Modifier, on
             Text("FOUND TRACES (${report.traces.size})", color = TextPrimary, fontWeight = FontWeight.Bold)
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(
-                    onClick = { onClearTraces(report.traces.take(100)) },
+                    onClick = { showConfirmDialog = true },
+                    enabled = !isSystemBusy,
                     colors = ButtonDefaults.buttonColors(containerColor = LaserRed),
-                    modifier = Modifier.weight(1f).height(48.dp),
+                    modifier = Modifier.weight(1f).height(38.dp),
                     shape = RoundedCornerShape(12.dp)
                 ) {
-                    Text("WIPE TRACES", color = Color.White, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
+                    Text("WIPE TRACES", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
                 }
                 Button(
                     onClick = onBack,
+                    enabled = !isSystemBusy,
                     colors = ButtonDefaults.buttonColors(containerColor = SlateBorder),
-                    modifier = Modifier.weight(1f).height(48.dp),
+                    modifier = Modifier.weight(1f).height(38.dp),
                     shape = RoundedCornerShape(12.dp)
                 ) {
-                    Text("BACK", color = Color.White, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
+                    Text("BACK", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
                 }
             }
         }
@@ -284,7 +305,7 @@ fun ForensicTracesView(report: ForensicReport, modifier: Modifier = Modifier, on
 }
 
 @Composable
-fun ForensicDashboard(report: ForensicReport, onShowTraces: (String) -> Unit) {
+fun ForensicDashboard(report: ForensicReport, isSystemBusy: Boolean, onShowTraces: (String) -> Unit) {
     val context = LocalContext.current
     Column(
         modifier = Modifier.fillMaxWidth(),
@@ -369,13 +390,14 @@ fun ForensicDashboard(report: ForensicReport, onShowTraces: (String) -> Unit) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(
                 onClick = { onShowTraces("ALL") },
-                modifier = Modifier.weight(1f).height(48.dp),
+                enabled = !isSystemBusy,
+                modifier = Modifier.weight(1f).height(38.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = NeonGreen),
                 shape = RoundedCornerShape(12.dp)
             ) {
-                Icon(Icons.Default.List, contentDescription = "View Traces", tint = CarbonDarkBg)
+                Icon(Icons.Default.List, contentDescription = "View Traces", tint = CarbonDarkBg, modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("VIEW TRACES", color = CarbonDarkBg, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
+                Text("VIEW TRACES", color = CarbonDarkBg, fontSize = 11.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
             }
             
             Button(
@@ -402,13 +424,14 @@ fun ForensicDashboard(report: ForensicReport, onShowTraces: (String) -> Unit) {
                         Toast.makeText(context, "Failed to export: ${e.message}", Toast.LENGTH_LONG).show()
                     }
                 },
-                modifier = Modifier.weight(1f).height(48.dp),
+                enabled = !isSystemBusy,
+                modifier = Modifier.weight(1f).height(38.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = SlateBorder),
                 shape = RoundedCornerShape(12.dp)
             ) {
-                Icon(Icons.Default.Download, contentDescription = "Export Report", tint = Color.White)
+                Icon(Icons.Default.Download, contentDescription = "Export Report", tint = Color.White, modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("EXPORT", color = Color.White, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
+                Text("EXPORT", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
             }
         }
     }

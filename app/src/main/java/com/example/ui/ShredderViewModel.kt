@@ -231,43 +231,71 @@ class ShredderViewModel(application: Application) : AndroidViewModel(application
 
     fun addFiles(uris: List<Uri>) {
         val context = getApplication<Application>()
-        val contentResolver = context.contentResolver
-        val newList = _selectedFiles.value.toMutableList()
+        viewModelScope.launch(Dispatchers.IO) {
+            val contentResolver = context.contentResolver
+            val newList = _selectedFiles.value.toMutableList()
 
-        for (uri in uris) {
-            // Avoid duplicates
-            if (newList.any { it.uri == uri }) continue
+            for (uri in uris) {
+                // Avoid duplicates
+                if (newList.any { it.uri == uri }) continue
 
-            var name = "unknown_file"
-            var size = 0L
-            val mimeType = contentResolver.getType(uri)
+                var name = "unknown_file"
+                var size = 0L
+                val mimeType = contentResolver.getType(uri)
 
-            try {
-                contentResolver.query(uri, null, null, null, null)?.use { cursor ->
-                    if (cursor.moveToFirst()) {
-                        val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                        val sizeIndex = cursor.getColumnIndex(OpenableColumns.SIZE)
-                        if (nameIndex != -1) name = cursor.getString(nameIndex)
-                        if (sizeIndex != -1) size = cursor.getLong(sizeIndex)
-                    }
-                }
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-
-            if (size <= 0) {
                 try {
-                    contentResolver.openInputStream(uri)?.use { stream ->
-                        size = stream.available().toLong()
+                    contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                        if (cursor.moveToFirst()) {
+                            val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                            val sizeIndex = cursor.getColumnIndex(OpenableColumns.SIZE)
+                            if (nameIndex != -1) name = cursor.getString(nameIndex)
+                            if (sizeIndex != -1) size = cursor.getLong(sizeIndex)
+                        }
                     }
                 } catch (e: Exception) {
-                    size = 0L
+                    e.printStackTrace()
+                }
+
+                if (size <= 0) {
+                    try {
+                        contentResolver.openInputStream(uri)?.use { stream ->
+                            size = stream.available().toLong()
+                        }
+                    } catch (e: Exception) {
+                        size = 0L
+                    }
+                }
+
+                newList.add(SelectedFileInfo(uri, name, size, mimeType))
+            }
+            _selectedFiles.value = newList
+        }
+    }
+
+    fun addDirectory(treeUri: Uri) {
+        val context = getApplication<Application>()
+        viewModelScope.launch(Dispatchers.IO) {
+            val rootDoc = androidx.documentfile.provider.DocumentFile.fromTreeUri(context, treeUri)
+            if (rootDoc != null && rootDoc.isDirectory) {
+                val uris = mutableListOf<Uri>()
+                traverseDirectory(rootDoc, uris)
+                addFiles(uris)
+            }
+        }
+    }
+
+    private fun traverseDirectory(doc: androidx.documentfile.provider.DocumentFile, list: MutableList<Uri>) {
+        if (doc.isDirectory) {
+            for (file in doc.listFiles()) {
+                if (file.isDirectory) {
+                    traverseDirectory(file, list)
+                } else if (file.isFile) {
+                    list.add(file.uri)
                 }
             }
-
-            newList.add(SelectedFileInfo(uri, name, size, mimeType))
+        } else if (doc.isFile) {
+            list.add(doc.uri)
         }
-        _selectedFiles.value = newList
     }
 
     fun removeFile(info: SelectedFileInfo) {

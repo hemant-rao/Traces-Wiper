@@ -15,6 +15,7 @@ import androidx.core.content.ContextCompat
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.SystemBarStyle
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
@@ -83,8 +84,10 @@ import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.ViewAgenda
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.OutlinedButton
@@ -106,6 +109,7 @@ import androidx.compose.material3.TabRowDefaults
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -115,6 +119,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.scale
@@ -184,20 +189,43 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
         storagePermissionGranted.value = hasRequiredPermissions()
         setContent {
+            ThemeState.systemIsDark = androidx.compose.foundation.isSystemInDarkTheme()
+            val isDark = ThemeState.isDarkTheme
+            DisposableEffect(isDark) {
+                enableEdgeToEdge(
+                    statusBarStyle = if (isDark) {
+                        SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+                    } else {
+                        SystemBarStyle.light(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT)
+                    },
+                    navigationBarStyle = if (isDark) {
+                        SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+                    } else {
+                        SystemBarStyle.light(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT)
+                    }
+                )
+                onDispose {}
+            }
+            
             MyApplicationTheme {
-                val isGranted = storagePermissionGranted.value // verified
-                Scaffold(
-                    modifier = Modifier.fillMaxSize(),
-                    contentWindowInsets = WindowInsets(0, 0, 0, 0)
-                ) { innerPadding ->
-                    ShredderAppScreen(
-                        modifier = Modifier.padding(innerPadding),
-                        isStorageGranted = isGranted,
-                        onRequestStoragePermission = { ensureFileAccessPermission() }
-                    )
+                var showSplash by remember { mutableStateOf(true) }
+                
+                if (showSplash) {
+                    AnimatedSplashScreen(onSplashFinished = { showSplash = false })
+                } else {
+                    val isGranted = storagePermissionGranted.value // verified
+                    Scaffold(
+                        modifier = Modifier.fillMaxSize(),
+                        contentWindowInsets = WindowInsets(0, 0, 0, 0)
+                    ) { innerPadding ->
+                        ShredderAppScreen(
+                            modifier = Modifier.padding(innerPadding),
+                            isStorageGranted = isGranted,
+                            onRequestStoragePermission = { ensureFileAccessPermission() }
+                        )
+                    }
                 }
             }
         }
@@ -252,6 +280,72 @@ class MainActivity : ComponentActivity() {
             if (needsRequest) {
                 storagePermissionLauncher.launch(perms)
             }
+        }
+    }
+}
+
+@Composable
+fun AnimatedSplashScreen(onSplashFinished: () -> Unit) {
+    var startAnimation by remember { mutableStateOf(false) }
+    
+    // Scale animation
+    val scale by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = if (startAnimation) 1f else 0.5f,
+        animationSpec = tween(
+            durationMillis = 1000,
+            easing = androidx.compose.animation.core.FastOutSlowInEasing
+        ),
+        label = "SplashScale"
+    )
+
+    val alpha by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = if (startAnimation) 1f else 0f,
+        animationSpec = tween(
+            durationMillis = 1000,
+            easing = androidx.compose.animation.core.LinearEasing
+        ),
+        label = "SplashAlpha"
+    )
+    
+    LaunchedEffect(key1 = true) {
+        startAnimation = true
+        delay(2000L) // Wait for 2 seconds
+        onSplashFinished()
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(if (ThemeState.isDarkTheme) com.example.ui.theme.CarbonDarkBg else Color(0xFFF8FAFC)), // Slate-50 for light mode
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+            modifier = Modifier.alpha(alpha).scale(scale)
+        ) {
+            Icon(
+                imageVector = Icons.Default.Security,
+                contentDescription = "App Logo",
+                tint = NeonGreen,
+                modifier = Modifier.size(100.dp)
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(
+                text = "Traces Wiper",
+                color = if (ThemeState.isDarkTheme) Color.White else com.example.ui.theme.CarbonDarkBg,
+                fontSize = 32.sp,
+                fontWeight = FontWeight.Bold,
+                fontFamily = FontFamily.Monospace,
+                letterSpacing = 2.sp
+            )
+            Text(
+                text = "MILITARY-GRADE SECURE ERASURE",
+                color = NeonGreen,
+                fontSize = 11.sp,
+                letterSpacing = 1.sp,
+                modifier = Modifier.padding(top = 8.dp)
+            )
         }
     }
 }
@@ -366,6 +460,15 @@ fun ShredderAppScreen(
         }
     }
 
+    val directoryPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree()
+    ) { uri ->
+        if (uri != null) {
+            viewModel.addDirectory(uri)
+            Toast.makeText(context, "Directory contents queued", Toast.LENGTH_SHORT).show()
+        }
+    }
+
     // Launches the system delete-confirmation dialog requested by MediaStore.createDeleteRequest
     // when a wiped file cannot be unlinked directly, then reports the user's choice back.
     val deleteConsentLauncher = rememberLauncherForActivityResult(
@@ -447,13 +550,21 @@ fun ShredderAppScreen(
                             if (isAnyProcessRunning) {
                                 Toast.makeText(context, AppTexts.SYSTEM_BUSY_TOAST, Toast.LENGTH_SHORT).show()
                             } else {
-                                ThemeState.isDarkTheme = !ThemeState.isDarkTheme
+                                ThemeState.themeMode = when (ThemeState.themeMode) {
+                                    com.example.ui.theme.ThemeMode.SYSTEM -> com.example.ui.theme.ThemeMode.LIGHT
+                                    com.example.ui.theme.ThemeMode.LIGHT -> com.example.ui.theme.ThemeMode.DARK
+                                    com.example.ui.theme.ThemeMode.DARK -> com.example.ui.theme.ThemeMode.SYSTEM
+                                }
                             }
                         },
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
-                        imageVector = if (ThemeState.isDarkTheme) Icons.Default.LightMode else Icons.Default.DarkMode,
+                        imageVector = when (ThemeState.themeMode) {
+                            com.example.ui.theme.ThemeMode.SYSTEM -> Icons.Default.Settings
+                            com.example.ui.theme.ThemeMode.LIGHT -> Icons.Default.LightMode
+                            com.example.ui.theme.ThemeMode.DARK -> Icons.Default.DarkMode
+                        },
                         contentDescription = "Toggle Theme",
                         tint = if (ThemeState.isDarkTheme) Color(0xFFFBBF24) else Color(0xFF475569),
                         modifier = Modifier.size(20.dp)
@@ -530,6 +641,7 @@ fun ShredderAppScreen(
                         currentAlgo = currentAlgo,
                         progressState = progressState,
                         onPickFiles = { filePickerLauncher.launch(arrayOf("*/*")) },
+                        onPickDirectory = { directoryPickerLauncher.launch(null) },
                         onRemoveFile = { viewModel.removeFile(it) },
                         onAlgoSelected = { viewModel.updateSelectedAlgorithm(it) },
                         onStartShred = { viewModel.startShredding() },
@@ -912,6 +1024,7 @@ fun ShredHubTab(
     currentAlgo: ShredAlgorithm,
     progressState: ShredProgressState,
     onPickFiles: () -> Unit,
+    onPickDirectory: () -> Unit,
     onRemoveFile: (SelectedFileInfo) -> Unit,
     onAlgoSelected: (ShredAlgorithm) -> Unit,
     onStartShred: () -> Unit,
@@ -962,6 +1075,7 @@ fun ShredHubTab(
                     currentAlgo = currentAlgo,
                     progressState = progressState,
                     onPickFiles = onPickFiles,
+                    onPickDirectory = onPickDirectory,
                     onRemoveFile = onRemoveFile,
                     onAlgoSelected = onAlgoSelected,
                     onStartShred = onStartShred,
@@ -995,7 +1109,7 @@ fun RecoverHubTab(isSystemBusy: Boolean = false) {
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         InnerTabBar(
-            titles = listOf("Find Traces", "Restore"),
+            titles = listOf("Clean Traces", "Restore"),
             selected = innerTab,
             onSelect = { innerTab = it },
             enabled = !isSystemBusy
@@ -1421,6 +1535,7 @@ fun FileShredderTab(
     currentAlgo: ShredAlgorithm,
     progressState: ShredProgressState,
     onPickFiles: () -> Unit,
+    onPickDirectory: () -> Unit,
     onRemoveFile: (SelectedFileInfo) -> Unit,
     onAlgoSelected: (ShredAlgorithm) -> Unit,
     onStartShred: () -> Unit,
@@ -1439,6 +1554,7 @@ fun FileShredderTab(
             message = "You are about to permanently delete ${selectedFiles.size} selected file(s). " + AppTexts.SHRED_CONFIRM_MESSAGE.substringAfter("permanently delete the selected files. "),
             confirmText = "PERMANENTLY DELETE",
             cancelText = "CANCEL",
+            requireConfirmationWord = "CONFIRM",
             onConfirm = {
                 showConfirmShredDialog = false
                 onStartShred()
@@ -1639,9 +1755,10 @@ fun FileShredderTab(
                                         Spacer(modifier = Modifier.height(10.dp))
                                         Button(
                                             onClick = onRequestStoragePermission,
+                                            enabled = !isSystemBusy,
                                             colors = ButtonDefaults.buttonColors(containerColor = ElectricAmber),
                                             shape = RoundedCornerShape(12.dp),
-                                            modifier = Modifier.height(36.dp),
+                                            modifier = Modifier.height(38.dp),
                                             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp)
                                         ) {
                                             Text(
@@ -1700,27 +1817,54 @@ fun FileShredderTab(
                                 fontFamily = FontFamily.Monospace
                             )
 
-                            Button(
-                                onClick = onPickFiles,
-                                enabled = !isSystemBusy,
-                                colors = ButtonDefaults.buttonColors(containerColor = NeonGreen),
-                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 0.dp),
-                                shape = RoundedCornerShape(12.dp),
-                                modifier = Modifier.height(36.dp).testTag("select_files_button")
-                            ) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(
-                                        imageVector = Icons.Default.Add,
-                                        contentDescription = null,
-                                        tint = CarbonDarkBg,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text(
-                                        "Load Files",
-                                        color = CarbonDarkBg,
-                                        fontWeight = FontWeight.Bold
-                                    )
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Button(
+                                    onClick = onPickDirectory,
+                                    enabled = !isSystemBusy,
+                                    colors = ButtonDefaults.buttonColors(containerColor = CharcoalSurface),
+                                    border = BorderStroke(1.dp, NeonGreen),
+                                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 0.dp),
+                                    shape = RoundedCornerShape(12.dp),
+                                    modifier = Modifier.height(38.dp).testTag("select_directories_button")
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(
+                                            imageVector = Icons.Default.Add,
+                                            contentDescription = null,
+                                            tint = NeonGreen,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text(
+                                            "Folders",
+                                            color = NeonGreen,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+
+                                Button(
+                                    onClick = onPickFiles,
+                                    enabled = !isSystemBusy,
+                                    colors = ButtonDefaults.buttonColors(containerColor = NeonGreen),
+                                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 0.dp),
+                                    shape = RoundedCornerShape(12.dp),
+                                    modifier = Modifier.height(38.dp).testTag("select_files_button")
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(
+                                            imageVector = Icons.Default.Add,
+                                            contentDescription = null,
+                                            tint = CarbonDarkBg,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text(
+                                            "Files",
+                                            color = CarbonDarkBg,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -1744,7 +1888,7 @@ fun FileShredderTab(
                                 )
                                 Spacer(modifier = Modifier.height(8.dp))
                                 Text(
-                                    "No sensitive files loaded. Tap 'LOAD FILES' to securely load files from local storage.",
+                                    "No sensitive assets queued. Tap 'Folders' or 'Files' to select assets from local storage.",
                                     color = TextSecondary,
                                     fontSize = 12.sp,
                                     textAlign = TextAlign.Center,
@@ -1793,6 +1937,7 @@ fun FileShredderTab(
 
                                         IconButton(
                                             onClick = { onRemoveFile(fileInfo) },
+                                            enabled = !isSystemBusy,
                                             modifier = Modifier.size(24.dp)
                                         ) {
                                             Icon(
@@ -2103,6 +2248,7 @@ fun ShredHistoryTab(
             message = "This will permanently erase all wipe records. This action cannot be undone.",
             confirmText = "CONFIRM AND EXECUTE",
             cancelText = AppTexts.ABORT_ACTION,
+            requireConfirmationWord = "CLEAR",
             onConfirm = {
                 onClearAll()
                 showClearDialog = false
@@ -2544,7 +2690,7 @@ fun SwipeToExecuteButton(
 
     // We get actual width to bound the drag
     var componentWidthPx by remember { mutableStateOf(0f) }
-    val thumbSizeDp = 44.dp
+    val thumbSizeDp = 30.dp
     val thumbSizePx = with(density) { thumbSizeDp.toPx() }
 
     val animatedOffset by animateFloatAsState(
@@ -2564,10 +2710,10 @@ fun SwipeToExecuteButton(
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .height(52.dp)
-            .background(if (enabled) CharcoalSurface else CharcoalSurface.copy(alpha=0.5f), RoundedCornerShape(26.dp))
-            .border(1.dp, if (enabled) buttonColor else disabledColor, RoundedCornerShape(26.dp))
-            .clip(RoundedCornerShape(26.dp))
+            .height(38.dp)
+            .background(if (enabled) CharcoalSurface else CharcoalSurface.copy(alpha=0.5f), RoundedCornerShape(19.dp))
+            .border(1.dp, if (enabled) buttonColor else disabledColor, RoundedCornerShape(19.dp))
+            .clip(RoundedCornerShape(19.dp))
             .onGloballyPositioned { coordinates ->
                 componentWidthPx = coordinates.size.width.toFloat()
             },
@@ -2593,7 +2739,7 @@ fun SwipeToExecuteButton(
             modifier = Modifier.align(Alignment.CenterOffset(progress)),
             fontFamily = FontFamily.Monospace,
             fontWeight = FontWeight.Bold,
-            fontSize = 13.sp
+            fontSize = 11.sp
         )
 
         // Draggable thumb
@@ -2646,9 +2792,13 @@ fun CyberConfirmDialog(
     message: String,
     confirmText: String = "CONFIRM",
     cancelText: String = AppTexts.ABORT_ACTION,
+    requireConfirmationWord: String? = null,
     onConfirm: () -> Unit,
     onDismiss: () -> Unit
 ) {
+    var confirmationInput by androidx.compose.runtime.remember { mutableStateOf("") }
+    val isConfirmed = requireConfirmationWord == null || confirmationInput.equals(requireConfirmationWord, ignoreCase = true)
+
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = CharcoalSurface,
@@ -2675,27 +2825,48 @@ fun CyberConfirmDialog(
             }
         },
         text = {
-            Text(
-                text = message,
-                color = TextPrimary,
-                fontSize = 12.sp,
-                fontFamily = FontFamily.SansSerif,
-                lineHeight = 16.sp
-            )
+            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                Text(
+                    text = message,
+                    color = TextPrimary,
+                    fontSize = 12.sp,
+                    fontFamily = FontFamily.SansSerif,
+                    lineHeight = 16.sp
+                )
+                
+                if (requireConfirmationWord != null) {
+                    androidx.compose.material3.OutlinedTextField(
+                        value = confirmationInput,
+                        onValueChange = { confirmationInput = it },
+                        label = { Text("Type '$requireConfirmationWord' to proceed", fontSize = 11.sp) },
+                        modifier = Modifier.fillMaxWidth().testTag("confirmation_input"),
+                        singleLine = true,
+                        textStyle = androidx.compose.ui.text.TextStyle(color = TextPrimary)
+                    )
+                }
+            }
         },
         confirmButton = {
             Button(
                 onClick = {
-                    onConfirm()
-                    onDismiss()
+                    if (isConfirmed) {
+                        onConfirm()
+                        onDismiss()
+                    }
                 },
-                colors = ButtonDefaults.buttonColors(containerColor = LaserRed),
+                enabled = isConfirmed,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = LaserRed,
+                    disabledContainerColor = LaserRed.copy(alpha = 0.3f),
+                    disabledContentColor = Color.White.copy(alpha = 0.5f)
+                ),
                 shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.height(48.dp)
+                modifier = Modifier.height(38.dp).testTag("dialog_confirm_button")
             ) {
                 Text(
                     text = confirmText,
-                    color = Color.White,
+                    color = if (isConfirmed) Color.White else Color.White.copy(alpha = 0.5f),
+                    fontSize = 11.sp,
                     fontWeight = FontWeight.Bold,
                     fontFamily = FontFamily.Monospace
                 )
@@ -2706,11 +2877,12 @@ fun CyberConfirmDialog(
                 onClick = onDismiss,
                 border = BorderStroke(1.dp, SlateBorder),
                 shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.height(48.dp),
+                modifier = Modifier.height(38.dp),
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = TextSecondary)
             ) {
                 Text(
                     text = cancelText,
+                    fontSize = 11.sp,
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.Bold
                 )
@@ -2848,7 +3020,7 @@ fun PermissionBlockedScreen(
                 colors = ButtonDefaults.buttonColors(containerColor = LaserRed),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(50.dp)
+                    .height(38.dp)
                     .testTag("grant_permission_button"),
                 shape = RoundedCornerShape(12.dp)
             ) {
@@ -2856,7 +3028,7 @@ fun PermissionBlockedScreen(
                     text = "AUTHORIZE SECURE ACCESS",
                     color = Color.White,
                     fontWeight = FontWeight.Bold,
-                    fontSize = 12.sp,
+                    fontSize = 11.sp,
                     fontFamily = FontFamily.Monospace
                 )
             }

@@ -192,7 +192,7 @@ class TraceScanner(private val context: Context) {
         }
     }
 
-    private fun scanMediaStore(from: Long, to: Long, out: MutableMap<String, RecoverableTrace>) {
+    private suspend fun scanMediaStore(from: Long, to: Long, out: MutableMap<String, RecoverableTrace>) {
         val resolver = context.contentResolver
         val collection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
             MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL)
@@ -227,41 +227,47 @@ class TraceScanner(private val context: Context) {
             null
         } ?: return
 
-        cursor.use { c ->
-            val idC = c.getColumnIndexOrThrow(MediaStore.Files.FileColumns._ID)
-            val nameC = c.getColumnIndexOrThrow(MediaStore.Files.FileColumns.DISPLAY_NAME)
-            val mimeC = c.getColumnIndexOrThrow(MediaStore.Files.FileColumns.MIME_TYPE)
-            val sizeC = c.getColumnIndexOrThrow(MediaStore.Files.FileColumns.SIZE)
-            val dateC = c.getColumnIndexOrThrow(MediaStore.Files.FileColumns.DATE_MODIFIED)
-            val dataC = c.getColumnIndexOrThrow(MediaStore.Files.FileColumns.DATA)
-            val typeC = c.getColumnIndexOrThrow(MediaStore.Files.FileColumns.MEDIA_TYPE)
-            val expC = c.getColumnIndex(MediaStore.Files.FileColumns.DATE_EXPIRES)
-            while (c.moveToNext()) {
-                val date = c.getLong(dateC) * 1000L
-                val expiresMillis = if (expC >= 0 && !c.isNull(expC)) c.getLong(expC) * 1000L else null
-                val deletedAt = expiresMillis?.let { it - TRASH_RETENTION_MILLIS }
-                // These are trashed items, so filter on the estimated deletion date when we have it.
-                val effective = deletedAt ?: date
-                if (effective < from || effective > to) continue
-                val id = c.getLong(idC)
-                val mime = if (!c.isNull(mimeC)) c.getString(mimeC) else null
-                val uri = ContentUris.withAppendedId(collection, id)
-                val path = if (!c.isNull(dataC)) c.getString(dataC) else null
-                val key = path ?: uri.toString()
-                out[key] = RecoverableTrace(
-                    id = uri.toString(),
-                    displayName = if (!c.isNull(nameC)) c.getString(nameC) else "(unknown)",
-                    category = categoryFor(mime, c.getInt(typeC)),
-                    mimeType = mime,
-                    sizeBytes = c.getLong(sizeC),
-                    dateMillis = date,
-                    contentUri = uri,
-                    filePath = path,
-                    source = "Recently deleted (Trash)",
-                    expiresMillis = expiresMillis,
-                    deletedAtMillis = deletedAt
-                )
+        try {
+            cursor.use { c ->
+                val idC = c.getColumnIndexOrThrow(MediaStore.Files.FileColumns._ID)
+                val nameC = c.getColumnIndexOrThrow(MediaStore.Files.FileColumns.DISPLAY_NAME)
+                val mimeC = c.getColumnIndexOrThrow(MediaStore.Files.FileColumns.MIME_TYPE)
+                val sizeC = c.getColumnIndexOrThrow(MediaStore.Files.FileColumns.SIZE)
+                val dateC = c.getColumnIndexOrThrow(MediaStore.Files.FileColumns.DATE_MODIFIED)
+                val dataC = c.getColumnIndexOrThrow(MediaStore.Files.FileColumns.DATA)
+                val typeC = c.getColumnIndexOrThrow(MediaStore.Files.FileColumns.MEDIA_TYPE)
+                val expC = c.getColumnIndex(MediaStore.Files.FileColumns.DATE_EXPIRES)
+                while (c.moveToNext()) {
+                    kotlin.coroutines.coroutineContext.ensureActive()
+                    val date = c.getLong(dateC) * 1000L
+                    val expiresMillis = if (expC >= 0 && !c.isNull(expC)) c.getLong(expC) * 1000L else null
+                    val deletedAt = expiresMillis?.let { it - TRASH_RETENTION_MILLIS }
+                    // These are trashed items, so filter on the estimated deletion date when we have it.
+                    val effective = deletedAt ?: date
+                    if (effective < from || effective > to) continue
+                    val id = c.getLong(idC)
+                    val mime = if (!c.isNull(mimeC)) c.getString(mimeC) else null
+                    val uri = ContentUris.withAppendedId(collection, id)
+                    val path = if (!c.isNull(dataC)) c.getString(dataC) else null
+                    val key = path ?: uri.toString()
+                    out[key] = RecoverableTrace(
+                        id = uri.toString(),
+                        displayName = if (!c.isNull(nameC)) c.getString(nameC) else "(unknown)",
+                        category = categoryFor(mime, c.getInt(typeC)),
+                        mimeType = mime,
+                        sizeBytes = c.getLong(sizeC),
+                        dateMillis = date,
+                        contentUri = uri,
+                        filePath = path,
+                        source = "Recently deleted (Trash)",
+                        expiresMillis = expiresMillis,
+                        deletedAtMillis = deletedAt
+                    )
+                }
             }
+        } catch (e: Exception) {
+            signal.cancel()
+            throw e
         }
     }
 

@@ -213,8 +213,8 @@ fun DeepWipeScreen(vm: DeepWipeViewModel, isSystemBusy: Boolean = false) {
                             onClick = vm::startFreeSpaceWipe,
                             enabled = !isSystemBusy,
                             colors = ButtonDefaults.buttonColors(containerColor = TerminalCyan),
-                            shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier.fillMaxWidth()
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth().height(38.dp)
                         ) {
                             Text(
                                 text = "START EMPTY SPACE CLEANING",
@@ -282,8 +282,9 @@ fun DeepWipeScreen(vm: DeepWipeViewModel, isSystemBusy: Boolean = false) {
                                 onClick = vm::cancel,
                                 border = BorderStroke(1.dp, LaserRed.copy(alpha = 0.5f)),
                                 colors = ButtonDefaults.outlinedButtonColors(contentColor = LaserRed),
-                                shape = RoundedCornerShape(8.dp),
-                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.height(38.dp),
+                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 0.dp)
                             ) {
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
@@ -342,8 +343,8 @@ fun DeepWipeScreen(vm: DeepWipeViewModel, isSystemBusy: Boolean = false) {
                             onClick = vm::startFreeSpaceWipe,
                             enabled = !isSystemBusy,
                             colors = ButtonDefaults.buttonColors(containerColor = NeonGreen),
-                            shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier.fillMaxWidth()
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth().height(38.dp)
                         ) {
                             Text(
                                 text = "RUN ERASE CYCLE AGAIN",
@@ -391,8 +392,8 @@ fun DeepWipeScreen(vm: DeepWipeViewModel, isSystemBusy: Boolean = false) {
                             onClick = vm::startFreeSpaceWipe,
                             enabled = !isSystemBusy,
                             colors = ButtonDefaults.buttonColors(containerColor = TerminalCyan),
-                            shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier.fillMaxWidth()
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth().height(38.dp)
                         ) {
                             Text(
                                 text = AppTexts.START_OVERWRITE,
@@ -441,8 +442,8 @@ fun DeepWipeScreen(vm: DeepWipeViewModel, isSystemBusy: Boolean = false) {
                             onClick = vm::startFreeSpaceWipe,
                             enabled = !isSystemBusy,
                             colors = ButtonDefaults.buttonColors(containerColor = LaserRed),
-                            shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier.fillMaxWidth()
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth().height(38.dp)
                         ) {
                             Text(
                                 text = "RETRY SECTOR SCRUB",
