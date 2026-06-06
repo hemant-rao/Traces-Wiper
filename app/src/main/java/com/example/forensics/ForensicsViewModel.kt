@@ -32,15 +32,16 @@ class ForensicsViewModel(application: Application) : AndroidViewModel(applicatio
                 
                 // Real scan using TraceScanner across all time
                 var currentCount = 0
+                val ESTIMATED_MAX_FILES = 800
                 val traces = traceScanner.scan(
                     fromMillis = 0L,
                     toMillis = System.currentTimeMillis() + 86400000L,
                     includeFilesystem = true,
                     onProgress = { count ->
-                        if (count - currentCount > 50) {
+                        if (count - currentCount > 10) {
                             currentCount = count
-                            val rnd = Math.random()
-                            _scanState.value = ScanState.Scanning(0.4f + (rnd * 0.2f).toFloat(), "Analyzed $count remnants...")
+                            val progress = (count.toFloat() / ESTIMATED_MAX_FILES).coerceIn(0.1f, 0.6f)
+                            _scanState.value = ScanState.Scanning(progress, "Analyzed $count remnants...")
                         }
                     }
                 )

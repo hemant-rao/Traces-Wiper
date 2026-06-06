@@ -32,16 +32,16 @@ val SlateBorder: Color
 
 // Accent Colors mapped to semantic variables so no existing component breaks
 val NeonGreen: Color 
-    get() = if (ThemeState.isDarkTheme) Color(0xFF10B981) else Color(0xFF059669) // Success Accent #10B981 for elite cybersecurity look
+    get() = if (ThemeState.isDarkTheme) Color(0xFF10B981) else Color(0xFF047857) // Darker, more contrast #047857 for light mode
 
 val TerminalCyan: Color 
-    get() = if (ThemeState.isDarkTheme) Color(0xFF22D3EE) else Color(0xFF0369A1) // Polished Neon Cyan #22D3EE
+    get() = if (ThemeState.isDarkTheme) Color(0xFF22D3EE) else Color(0xFF0284C7) // Stronger Cyan #0284C7 for light mode
 
 val ElectricAmber: Color 
-    get() = if (ThemeState.isDarkTheme) Color(0xFFFBBF24) else Color(0xFFB45309) // Refined Amber Gold #FBBF24
+    get() = if (ThemeState.isDarkTheme) Color(0xFFFBBF24) else Color(0xFFD97706) // Stronger Amber #D97706 for light mode
 
 val LaserRed: Color 
-    get() = if (ThemeState.isDarkTheme) Color(0xFFEF4444) else Color(0xFFB91C1C) // Vivid Crimson Red #EF4444
+    get() = if (ThemeState.isDarkTheme) Color(0xFFEF4444) else Color(0xFFDC2626) // Stronger Red #DC2626 for light mode
 
 val TextPrimary: Color 
     get() = if (ThemeState.isDarkTheme) Color(0xFFF8FAFC) else Color(0xFF0F172A)

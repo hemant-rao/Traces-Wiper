@@ -71,6 +71,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.PlayArrow
@@ -333,8 +335,8 @@ fun AnimatedSplashScreen(onSplashFinished: () -> Unit) {
             Spacer(modifier = Modifier.height(16.dp))
             Text(
                 text = "Traces Wiper",
-                color = if (ThemeState.isDarkTheme) Color.White else com.example.ui.theme.CarbonDarkBg,
-                fontSize = 32.sp,
+                color = com.example.ui.theme.NeonGreen,
+                fontSize = 42.sp,
                 fontWeight = FontWeight.Bold,
                 fontFamily = FontFamily.Monospace,
                 letterSpacing = 2.sp
@@ -795,6 +797,19 @@ fun ShredderAppScreen(
                                     .size(48.dp)
                             )
                         }
+                    }
+
+                    if (progressState.isShredding && progressState.totalFilesCount > 0) {
+                        val progress = (progressState.currentFileIndex - 1).toFloat() / progressState.totalFilesCount.toFloat()
+                        LinearProgressIndicator(
+                            progress = { progress.coerceIn(0f, 1f) },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(8.dp)
+                                .clip(RoundedCornerShape(4.dp)),
+                            color = themeAccentColor,
+                            trackColor = themeAccentColor.copy(alpha = 0.2f)
+                        )
                     }
 
                     val overlayTitleText = when {
@@ -1811,72 +1826,55 @@ fun FileShredderTab(
                         ) {
                             Text(
                                 "SENSITIVE ASSETS TO WIPE",
-                                color = TextPrimary,
+                                color = NeonGreen,
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.Bold,
                                 fontFamily = FontFamily.Monospace
                             )
 
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Button(
+                            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                                IconButton(
                                     onClick = onPickDirectory,
                                     enabled = !isSystemBusy,
-                                    colors = ButtonDefaults.buttonColors(containerColor = CharcoalSurface),
-                                    border = BorderStroke(1.dp, NeonGreen),
-                                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 0.dp),
-                                    shape = RoundedCornerShape(12.dp),
-                                    modifier = Modifier.height(38.dp).testTag("select_directories_button")
+                                    modifier = Modifier
+                                        .size(48.dp)
+                                        .border(1.dp, NeonGreen, RoundedCornerShape(12.dp))
+                                        .testTag("select_directories_button")
                                 ) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(
-                                            imageVector = Icons.Default.Add,
-                                            contentDescription = null,
-                                            tint = NeonGreen,
-                                            modifier = Modifier.size(16.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Text(
-                                            "Folders",
-                                            color = NeonGreen,
-                                            fontWeight = FontWeight.Bold
-                                        )
-                                    }
+                                    Icon(
+                                        imageVector = Icons.Default.Folder,
+                                        contentDescription = "Select Folders",
+                                        tint = NeonGreen,
+                                        modifier = Modifier.size(24.dp)
+                                    )
                                 }
 
-                                Button(
+                                IconButton(
                                     onClick = onPickFiles,
                                     enabled = !isSystemBusy,
-                                    colors = ButtonDefaults.buttonColors(containerColor = NeonGreen),
-                                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 0.dp),
-                                    shape = RoundedCornerShape(12.dp),
-                                    modifier = Modifier.height(38.dp).testTag("select_files_button")
+                                    modifier = Modifier
+                                        .size(48.dp)
+                                        .background(NeonGreen, RoundedCornerShape(12.dp))
+                                        .testTag("select_files_button")
                                 ) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(
-                                            imageVector = Icons.Default.Add,
-                                            contentDescription = null,
-                                            tint = CarbonDarkBg,
-                                            modifier = Modifier.size(16.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Text(
-                                            "Files",
-                                            color = CarbonDarkBg,
-                                            fontWeight = FontWeight.Bold
-                                        )
-                                    }
+                                    Icon(
+                                        imageVector = Icons.Default.Description,
+                                        contentDescription = "Select Files",
+                                        tint = CarbonDarkBg,
+                                        modifier = Modifier.size(24.dp)
+                                    )
                                 }
                             }
                         }
 
-                        Spacer(modifier = Modifier.height(12.dp))
+                        Spacer(modifier = Modifier.height(16.dp))
 
                         if (selectedFiles.isEmpty()) {
                             // Empty state guidance
                             Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(vertical = 24.dp),
+                                    .padding(vertical = 32.dp),
                                 horizontalAlignment = Alignment.CenterHorizontally,
                                 verticalArrangement = Arrangement.Center
                             ) {
@@ -1884,13 +1882,13 @@ fun FileShredderTab(
                                     imageVector = Icons.Default.Info,
                                     contentDescription = null,
                                     tint = TextSecondary,
-                                    modifier = Modifier.size(32.dp)
+                                    modifier = Modifier.size(40.dp)
                                 )
-                                Spacer(modifier = Modifier.height(8.dp))
+                                Spacer(modifier = Modifier.height(12.dp))
                                 Text(
-                                    "No sensitive assets queued. Tap 'Folders' or 'Files' to select assets from local storage.",
+                                    "No sensitive assets queued.\nTap 'Folders' or 'Files' to add items.",
                                     color = TextSecondary,
-                                    fontSize = 12.sp,
+                                    fontSize = 13.sp,
                                     textAlign = TextAlign.Center,
                                     modifier = Modifier.padding(horizontal = 16.dp)
                                 )
@@ -1900,9 +1898,9 @@ fun FileShredderTab(
                             Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .heightIn(max = 240.dp)
+                                    .heightIn(max = 480.dp)
                                     .verticalScroll(rememberScrollState()),
-                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
                                 selectedFiles.forEach { fileInfo ->
                                     Row(
@@ -1910,10 +1908,10 @@ fun FileShredderTab(
                                             .fillMaxWidth()
                                             .background(
                                                 CarbonDarkBg,
-                                                RoundedCornerShape(6.dp)
+                                                RoundedCornerShape(8.dp)
                                             )
-                                            .border(1.dp, SlateBorder, RoundedCornerShape(6.dp))
-                                            .padding(horizontal = 10.dp, vertical = 8.dp),
+                                            .border(1.dp, SlateBorder, RoundedCornerShape(8.dp))
+                                            .padding(horizontal = 12.dp, vertical = 10.dp),
                                         horizontalArrangement = Arrangement.SpaceBetween,
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
@@ -1921,7 +1919,7 @@ fun FileShredderTab(
                                             Text(
                                                 fileInfo.name,
                                                 color = TextPrimary,
-                                                fontSize = 12.sp,
+                                                fontSize = 13.sp,
                                                 fontWeight = FontWeight.Bold,
                                                 fontFamily = FontFamily.Monospace,
                                                 maxLines = 1,
@@ -1930,7 +1928,7 @@ fun FileShredderTab(
                                             Text(
                                                 viewModel.formatSize(fileInfo.size),
                                                 color = TextSecondary,
-                                                fontSize = 10.sp,
+                                                fontSize = 11.sp,
                                                 fontFamily = FontFamily.Monospace
                                             )
                                         }
@@ -1938,13 +1936,13 @@ fun FileShredderTab(
                                         IconButton(
                                             onClick = { onRemoveFile(fileInfo) },
                                             enabled = !isSystemBusy,
-                                            modifier = Modifier.size(24.dp)
+                                            modifier = Modifier.size(32.dp)
                                         ) {
                                             Icon(
                                                 imageVector = Icons.Default.Delete,
                                                 contentDescription = "Remove selection",
                                                 tint = LaserRed,
-                                                modifier = Modifier.size(16.dp)
+                                                modifier = Modifier.size(20.dp)
                                             )
                                         }
                                     }
@@ -1957,9 +1955,9 @@ fun FileShredderTab(
                                     horizontalArrangement = Arrangement.End
                                 ) {
                                     Text(
-                                        text = "CLEAR ALL SELECTIONS",
+                                        text = "CLEAR ALL",
                                         color = TextSecondary,
-                                        fontSize = 11.sp,
+                                        fontSize = 12.sp,
                                         fontWeight = FontWeight.Bold,
                                         fontFamily = FontFamily.Monospace,
                                         modifier = Modifier
