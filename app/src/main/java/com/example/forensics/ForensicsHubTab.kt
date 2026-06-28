@@ -33,6 +33,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.ui.ShredderViewModel
+import com.example.ui.OdioBookFamilySection
 import com.example.ui.theme.*
 import com.example.SwipeToExecuteButton
 
@@ -96,26 +97,13 @@ fun ForensicsHubTab(
                     buttonColor = NeonGreen
                 )
 
-                // §776 — quiet "part of the OdioBook family" attribution. OdioBook
-                // (odiobook.com) is the parent company behind Dig Deep, Veda Drop &
-                // Solaris. Understated (small, muted) so it's present on the home
-                // surface but never dominates — matching the sibling apps.
+                // §777 — "The OdioBook Family" cross-promotion section (shared
+                // component across every family app). Replaces the older one-line
+                // §776 attribution with a richer discovery surface: the OdioBook
+                // logo, every sibling app, and clickable odiobook.com links.
                 Spacer(modifier = Modifier.height(28.dp))
-                Text(
-                    text = "PART OF THE ODIOBOOK FAMILY",
-                    color = TextSecondary,
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold,
-                    fontFamily = FontFamily.Monospace,
-                    letterSpacing = 1.5.sp
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = "Dig Deep is built by OdioBook — the company behind a family of apps including Veda Drop and Solaris.  odiobook.com",
-                    color = TextSecondary,
-                    fontSize = 11.sp,
-                    lineHeight = 15.sp,
-                    fontFamily = FontFamily.SansSerif,
+                OdioBookFamilySection(
+                    currentAppTitle = "Dig Deep",
                     modifier = Modifier.padding(horizontal = 16.dp)
                 )
             }
