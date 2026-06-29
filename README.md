@@ -1,9 +1,9 @@
-# Dig-deep-delete
+# Traces Wiper
 
 A privacy-focused Android application designed to secure your internal storage.
 
 ## Purpose
-Deleted files are rarely truly gone on modern Android devices due to flash storage wear leveling and encryption. Instead of providing misleading "recovery" features, Dig-deep-delete focuses on **honest privacy protection**:
+Deleted files are rarely truly gone on modern Android devices due to flash storage wear leveling and encryption. Instead of providing misleading "recovery" features, Traces Wiper focuses on **honest privacy protection**:
 
 - **Deep Wipe**: Overwrites free space on your internal storage with random data. This ensures that remnants of previously deleted files stored in free clusters are destroyed, making them unrecoverable by common recovery tools.
 - **Recoverable Traces**: Scans for leftovers, cached, trash, or remnants of files that have been deleted but still physically exist on your device.

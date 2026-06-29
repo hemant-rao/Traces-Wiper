@@ -3005,7 +3005,7 @@ fun PermissionBlockedScreen(
             Spacer(modifier = Modifier.height(16.dp))
 
             Text(
-                text = "To effectively eliminate selected files beyond recovery, the Dig-Deep-Delete engine requires higher direct filesystem access.",
+                text = "To effectively eliminate selected files beyond recovery, the Traces Wiper engine requires higher direct filesystem access.",
                 color = TextPrimary,
                 fontWeight = FontWeight.Medium,
                 fontSize = 13.sp,
