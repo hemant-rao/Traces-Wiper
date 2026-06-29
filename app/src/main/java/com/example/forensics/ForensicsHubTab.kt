@@ -33,7 +33,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.ui.ShredderViewModel
-import com.example.ui.OdioBookFamilySection
 import com.example.ui.theme.*
 import com.example.SwipeToExecuteButton
 
@@ -97,15 +96,6 @@ fun ForensicsHubTab(
                     buttonColor = NeonGreen
                 )
 
-                // §777 — "The OdioBook Family" cross-promotion section (shared
-                // component across every family app). Replaces the older one-line
-                // §776 attribution with a richer discovery surface: the OdioBook
-                // logo, every sibling app, and clickable odiobook.com links.
-                Spacer(modifier = Modifier.height(28.dp))
-                OdioBookFamilySection(
-                    currentAppTitle = "Dig Deep",
-                    modifier = Modifier.padding(horizontal = 16.dp)
-                )
                 // §778 — config-driven OdioBook banner (admin-controlled; no-op until
                 // ads are enabled for "digdeep"). Bottom of the idle/home surface.
                 com.example.ads.OdioBookAds.Banner(modifier = Modifier.padding(vertical = 8.dp))

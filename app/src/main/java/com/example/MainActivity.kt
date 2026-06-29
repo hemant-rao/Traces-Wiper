@@ -90,6 +90,7 @@ import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.BrightnessMedium
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.OutlinedButton
@@ -566,7 +567,7 @@ fun ShredderAppScreen(
                 ) {
                     Icon(
                         imageVector = when (ThemeState.themeMode) {
-                            com.example.ui.theme.ThemeMode.SYSTEM -> Icons.Default.Settings
+                            com.example.ui.theme.ThemeMode.SYSTEM -> Icons.Filled.BrightnessMedium
                             com.example.ui.theme.ThemeMode.LIGHT -> Icons.Default.LightMode
                             com.example.ui.theme.ThemeMode.DARK -> Icons.Default.DarkMode
                         },
@@ -1171,7 +1172,7 @@ fun HistoryAndGuideTab(
     viewModel: ShredderViewModel,
     isSystemBusy: Boolean = false
 ) {
-    var insideTabSelection by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(0) } // 0 = Shred Logs, 1 = Military Standards
+    var insideTabSelection by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(0) } // 0 = Shred Records, 1 = Security Standards, 2 = Our Apps
     
     androidx.activity.compose.BackHandler(enabled = insideTabSelection != 0) {
         insideTabSelection = 0
@@ -1184,7 +1185,7 @@ fun HistoryAndGuideTab(
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         InnerTabBar(
-            titles = listOf("Shred Records", "Security Standards"),
+            titles = listOf("Shred Records", "Security Standards", "Our Apps"),
             selected = insideTabSelection,
             onSelect = { insideTabSelection = it },
             enabled = !isSystemBusy
@@ -1207,10 +1208,22 @@ fun HistoryAndGuideTab(
             },
             label = "HistoryAndGuideTabTransition"
         ) { targetInsideTab ->
-            if (targetInsideTab == 0) {
-                ShredHistoryTab(historyLog, onClearAll, viewModel, isSystemBusy = isSystemBusy)
-            } else {
-                AlgorithmsTab()
+            when (targetInsideTab) {
+                0 -> ShredHistoryTab(historyLog, onClearAll, viewModel, isSystemBusy = isSystemBusy)
+                1 -> AlgorithmsTab()
+                2 -> {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .verticalScroll(rememberScrollState())
+                            .padding(vertical = 8.dp)
+                    ) {
+                        com.example.ui.OdioBookFamilySection(
+                            currentAppTitle = "Dig Deep",
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
             }
         }
     }
