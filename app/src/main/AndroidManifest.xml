@@ -8,6 +8,8 @@
     <!-- Optional, for the deep hidden/document scan. Needs Play Console justification. -->
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
         tools:ignore="ScopedStorage" />
+    <!-- §778 — needed to fetch the ads config + serve AdMob ads. -->
+    <uses-permission android:name="android.permission.INTERNET" />
 
     <application
         android:name=".MyApp"
@@ -20,6 +22,12 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.MyApplication"
         android:requestLegacyExternalStorage="true">
+        <!-- §778 — AdMob app id. Google's PUBLIC TEST id (safe to ship); the founder
+             swaps in the real id (from the OdioBook admin → Apps → Dig Deep) before a
+             production ads launch. -->
+        <meta-data
+            android:name="com.google.android.gms.ads.APPLICATION_ID"
+            android:value="ca-app-pub-3940256099942544~3347511713" />
         <activity
             android:name=".MainActivity"
             android:exported="true"

@@ -106,6 +106,9 @@ fun ForensicsHubTab(
                     currentAppTitle = "Dig Deep",
                     modifier = Modifier.padding(horizontal = 16.dp)
                 )
+                // §778 — config-driven OdioBook banner (admin-controlled; no-op until
+                // ads are enabled for "digdeep"). Bottom of the idle/home surface.
+                com.example.ads.OdioBookAds.Banner(modifier = Modifier.padding(vertical = 8.dp))
             }
             is ScanState.Scanning -> {
                 ForensicScanningCard(state)
@@ -139,6 +142,8 @@ fun ForensicsHubTab(
                                         Toast.makeText(context, "Cannot auto-delete: Needs user consent via system prompt.", Toast.LENGTH_LONG).show()
                                     } else {
                                         Toast.makeText(context, "Wiped ${result.deleted} traces securely.", Toast.LENGTH_SHORT).show()
+                                        // §778 — full-screen ad at a natural "task done" break (paced + capped 5/day).
+                                        (context as? android.app.Activity)?.let { com.example.ads.OdioBookAds.maybeShowInterstitial(it) }
                                         showTracesFilter = null
                                         forensicsViewModel.runForensicScan()
                                     }

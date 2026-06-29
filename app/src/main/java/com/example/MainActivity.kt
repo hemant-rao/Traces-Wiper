@@ -192,6 +192,9 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         storagePermissionGranted.value = hasRequiredPermissions()
+        // §778 — config-driven OdioBook ads (admin-controlled). Inits MobileAds +
+        // fetches this app's slice; no-op until ads are enabled for "digdeep".
+        com.example.ads.OdioBookAds.init(applicationContext, "digdeep")
         setContent {
             ThemeState.systemIsDark = androidx.compose.foundation.isSystemInDarkTheme()
             val isDark = ThemeState.isDarkTheme

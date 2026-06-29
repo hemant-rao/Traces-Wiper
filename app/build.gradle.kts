@@ -77,6 +77,9 @@ secrets {
 dependencies {
   implementation(platform(libs.androidx.compose.bom))
   implementation(platform(libs.firebase.bom))
+  // §778 — AdMob (config-driven; see com.example.ads.OdioBookAds). Direct coord so
+  // no version-catalog edit is needed (mirrors the Veda Drop / Razorpay pattern).
+  implementation("com.google.android.gms:play-services-ads:23.6.0")
   // implementation(libs.accompanist.permissions)
   implementation(libs.androidx.activity.compose)
   implementation("androidx.documentfile:documentfile:1.0.1")
